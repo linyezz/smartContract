@@ -1,0 +1,35 @@
+{
+  "name": "ecmax-smart-contract-desensitization",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "clean": "rm -rf dist src-tauri/target .vite-release artifacts",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "node scripts/tauri-wrapper.mjs"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@html2canvas/html2canvas": "^1.6.3",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-fs": "^2.4.1",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-store": "^2.4.0",
+    "dayjs": "^1.11.13",
+    "docx": "^9.6.1",
+    "element-plus": "^2.9.8",
+    "jspdf": "^4.2.1",
+    "mammoth": "^1.9.1",
+    "pdfjs-dist": "^4.10.38",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.4.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.2.1"
+  }
+}

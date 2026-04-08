@@ -1,0 +1,25 @@
+[package]
+name = "ecmax-smart-contract-desensitization"
+version = "0.1.0"
+description = "极易合同智能脱敏系统"
+authors = ["Codex"]
+license = ""
+repository = ""
+default-run = "ecmax-smart-contract-desensitization"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-store = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
