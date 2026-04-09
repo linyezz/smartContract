@@ -6,7 +6,7 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
-  "productName": "极易合同智能脱敏",
+  "productName": "SmartContract",
   "version": "0.1.0",
   "identifier": "com.ecmax.contract-desensitization",
   "app": {
