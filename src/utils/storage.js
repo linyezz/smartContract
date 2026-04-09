@@ -16,6 +16,7 @@ const adminMember = {
   email: 'admin@ecmax.local',
   phone: '13800138000',
   avatar: '',
+  loginType: 'password',
   customWords: ['极易科技', '商业秘密', '内部报价']
 }
 

@@ -15,7 +15,7 @@
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
-  --content-width: 1360px;
+  --content-width: min(1680px, calc(100vw - 48px));
   font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 

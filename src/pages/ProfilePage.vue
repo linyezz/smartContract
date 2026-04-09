@@ -2,7 +2,10 @@
   <div class="profile-grid">
     <aside class="content-card sidebar">
       <div class="avatar-block">
-        <div class="avatar-circle">{{ initial }}</div>
+        <div v-if="authStore.currentUser?.avatar" class="avatar-circle avatar-image-wrap">
+          <img :src="authStore.currentUser.avatar" :alt="authStore.currentUser.name" class="avatar-image" />
+        </div>
+        <div v-else class="avatar-circle">{{ initial }}</div>
         <h3>{{ authStore.currentUser?.name }}</h3>
         <p>{{ authStore.currentUser?.title }}</p>
       </div>
@@ -32,19 +35,21 @@
             <div class="inline-add">
               <el-input v-model="wordInput" placeholder="输入一个自定义词" @keyup.enter="addWord" />
               <el-button type="primary" @click="addWord">添加</el-button>
+              <el-button @click="importWords">导入词库</el-button>
             </div>
           </template>
         </SectionHeader>
 
         <div class="word-section">
           <p class="word-title">我的词库</p>
+          <p class="word-tip">支持导入 `docx`、`txt`、`md`，系统会自动从文本中提取词条并去重。</p>
           <div class="word-list">
             <el-tag
               v-for="word in myWords"
               :key="word"
               closable
               size="large"
-              @close="removeWord(word)"
+              @close.prevent="removeWord(word)"
             >
               {{ word }}
             </el-tag>
@@ -128,9 +133,11 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { open } from '@tauri-apps/plugin-dialog'
 import SectionHeader from '../components/SectionHeader.vue'
 import { useAuthStore } from '../store/auth'
 import { uid } from '../utils/storage'
+import { readWordLibraryFile, WORD_LIBRARY_FILE_TYPES } from '../utils/file'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -193,12 +200,66 @@ function addWord() {
   ElMessage.success('已添加自定义脱敏词')
 }
 
-function removeWord(word) {
-  authStore.setCustomWords(
-    authStore.currentUser.id,
-    myWords.value.filter((item) => item !== word)
+function normalizeImportedWords(text) {
+  return Array.from(
+    new Set(
+      text
+        .split(/[\n\r,，;；、\t\s]+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length >= 2 && item.length <= 40)
+    )
   )
-  ElMessage.success('已删除脱敏词')
+}
+
+async function importWords() {
+  try {
+    const path = await pickFileByExtensions(WORD_LIBRARY_FILE_TYPES)
+    if (!path) {
+      return
+    }
+    const file = await readWordLibraryFile(path)
+    const importedWords = normalizeImportedWords(file.text)
+    if (!importedWords.length) {
+      ElMessage.warning('未从文件中识别到可导入的词条')
+      return
+    }
+
+    const previousCount = myWords.value.length
+    const nextWords = Array.from(new Set([...importedWords, ...myWords.value]))
+    authStore.setCustomWords(authStore.currentUser.id, nextWords)
+    ElMessage.success(`导入完成，新增 ${nextWords.length - previousCount} 个词条`)
+  } catch (error) {
+    ElMessage.error(error.message || '导入词库失败')
+  }
+}
+
+async function removeWord(word) {
+  try {
+    await ElMessageBox.confirm(`确认删除词条“${word}”吗？`, '删除确认', {
+      type: 'warning'
+    })
+    authStore.setCustomWords(
+      authStore.currentUser.id,
+      myWords.value.filter((item) => item !== word)
+    )
+    ElMessage.success('已删除脱敏词')
+  } catch {
+    // noop
+  }
+}
+
+async function pickFileByExtensions(extensions) {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    filters: [
+      {
+        name: '词库文件',
+        extensions
+      }
+    ]
+  })
+  return typeof selected === 'string' ? selected : null
 }
 
 async function createMember() {
@@ -278,6 +339,17 @@ function handleLogout() {
   font-weight: 800;
 }
 
+.avatar-image-wrap {
+  overflow: hidden;
+  background: rgba(47, 111, 237, 0.08);
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .avatar-block h3,
 .avatar-block p {
   margin: 0;
@@ -311,6 +383,12 @@ function handleLogout() {
 .word-title {
   margin: 0 0 12px;
   font-weight: 700;
+}
+
+.word-tip {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .word-list {

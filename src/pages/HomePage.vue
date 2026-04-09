@@ -7,12 +7,21 @@
         </template>
       </SectionHeader>
 
-      <div class="upload-box" @click="handlePickFile">
+      <div
+        class="upload-box"
+        :class="{ dragging: dragState.isOver }"
+        @click="handlePickFile"
+        @dragenter.prevent="handleDragEnter"
+        @dragover.prevent="handleDragOver"
+        @dragleave.prevent="handleDragLeave"
+        @drop.prevent="handleDrop"
+      >
         <strong>{{ currentFile?.fileName || '点击选择合同文件' }}</strong>
         <p>
           支持 PDF、DOC、DOCX 格式
           <span v-if="currentFile">，当前大小 {{ currentFile.sizeLabel }}</span>
         </p>
+        <small>也可以直接把文件拖到这里</small>
       </div>
 
       <el-space wrap class="mode-row">
@@ -120,6 +129,10 @@ const form = reactive({
 
 const currentFile = ref(null)
 const processing = ref(false)
+const dragState = reactive({
+  isOver: false,
+  depth: 0
+})
 const result = reactive({
   originalText: '',
   maskedText: '',
@@ -149,17 +162,64 @@ async function handlePickFile() {
     if (!path) {
       return
     }
-    currentFile.value = await readContractFile(path)
-    result.originalText = currentFile.value.text
-    result.maskedText = ''
-    result.hitList = []
-    result.exportPath = ''
-    result.sourcePath = currentFile.value.path
-    debugError.value = ''
-    ElMessage.success(`已加载 ${currentFile.value.fileName}`)
+    await applySelectedFile(path)
   } catch (error) {
     debugError.value = String(error?.stack || error?.message || error)
     ElMessage.error(error.message || '文件读取失败')
+  }
+}
+
+async function applySelectedFile(path) {
+  currentFile.value = await readContractFile(path)
+  result.originalText = currentFile.value.text
+  result.maskedText = ''
+  result.hitList = []
+  result.exportPath = ''
+  result.sourcePath = currentFile.value.path
+  debugError.value = ''
+  ElMessage.success(`已加载 ${currentFile.value.fileName}`)
+}
+
+function resetDragState() {
+  dragState.isOver = false
+  dragState.depth = 0
+}
+
+function handleDragEnter() {
+  dragState.depth += 1
+  dragState.isOver = true
+}
+
+function handleDragOver() {
+  dragState.isOver = true
+}
+
+function handleDragLeave() {
+  dragState.depth = Math.max(dragState.depth - 1, 0)
+  if (dragState.depth === 0) {
+    dragState.isOver = false
+  }
+}
+
+async function handleDrop(event) {
+  resetDragState()
+  const droppedFiles = Array.from(event.dataTransfer?.files || [])
+  if (!droppedFiles.length) {
+    return
+  }
+
+  const firstFile = droppedFiles[0]
+  const droppedPath = firstFile.path
+  if (!droppedPath) {
+    ElMessage.warning('当前环境未识别到拖拽文件路径，请改用点击上传。')
+    return
+  }
+
+  try {
+    await applySelectedFile(droppedPath)
+  } catch (error) {
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(error.message || '拖拽文件读取失败')
   }
 }
 
@@ -202,13 +262,17 @@ async function handleMask() {
       const exported = await exportMaskedResultToArchive(
         currentFile.value.fileName,
         currentFile.value.extension,
-        response.maskedText
+        response.maskedText,
+        {
+          user: authStore.currentUser
+        }
       )
       result.exportPath = exported.absolutePath
       historyStore.updateRecord(record.id, {
         exportExtension: exported.exportExtension,
         exportPath: exported.absolutePath,
-        exportRelativePath: exported.relativePath
+        exportRelativePath: exported.relativePath,
+        exportFolder: exported.folder
       })
       ElMessage.success(`脱敏完成，共识别 ${response.hitList.length} 项，结果已按原格式归档`)
     } catch (error) {
@@ -257,8 +321,9 @@ async function handleOpenExportPath() {
 <style scoped>
 .home-grid {
   display: grid;
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr);
   gap: 20px;
+  width: 100%;
 }
 
 .panel {
@@ -279,14 +344,27 @@ async function handleOpenExportPath() {
   border-color: rgba(47, 111, 237, 0.55);
 }
 
+.upload-box.dragging {
+  transform: translateY(-2px);
+  border-color: rgba(47, 111, 237, 0.7);
+  background: rgba(47, 111, 237, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.18);
+}
+
 .upload-box strong,
-.upload-box p {
+.upload-box p,
+.upload-box small {
   display: block;
 }
 
 .upload-box p {
   margin: 10px 0 0;
   color: var(--text-secondary);
+}
+
+.upload-box small {
+  margin-top: 10px;
+  color: var(--brand-dark);
 }
 
 .mode-row {
@@ -425,6 +503,14 @@ async function handleOpenExportPath() {
 }
 
 @media (max-width: 760px) {
+  .action-row {
+    flex-direction: column;
+  }
+
+  .action-row .el-button {
+    width: 100%;
+  }
+
   .preview-grid {
     grid-template-columns: 1fr;
   }

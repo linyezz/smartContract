@@ -7,6 +7,14 @@ function sanitizeFileName(fileName) {
   return fileName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
 }
 
+function sanitizeFolderSegment(value, fallback) {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+    .replace(/\s+/g, '_')
+  return normalized || fallback
+}
+
 function describeError(stage, error) {
   const message = error?.message || String(error)
   return new Error(`[${stage}] ${message}`)
@@ -19,6 +27,12 @@ function resolveExportExtension(extension) {
 function buildExportName(fileName, extension, stamp = dayjs().format('YYYYMMDD-HHmmss')) {
   const baseName = sanitizeFileName(fileName).replace(/\.[^.]+$/, '')
   return `${stamp}-${baseName}-脱敏结果.${resolveExportExtension(extension)}`
+}
+
+function resolveUserExportFolder(user = {}) {
+  const userId = sanitizeFolderSegment(user.id, 'unknown-user')
+  const userName = sanitizeFolderSegment(user.name || user.username, '未命名用户')
+  return `exports/${userId}-${userName}`
 }
 
 function toUint8Array(payload) {
@@ -161,8 +175,8 @@ export async function buildMaskedDocument(fileName, extension, maskedText) {
   }
 }
 
-export async function exportMaskedResultToArchive(fileName, extension, maskedText) {
-  const folder = 'exports'
+export async function exportMaskedResultToArchive(fileName, extension, maskedText, options = {}) {
+  const folder = resolveUserExportFolder(options.user)
   try {
     await mkdir(folder, {
       baseDir: BaseDirectory.AppLocalData,
@@ -208,7 +222,8 @@ export async function exportMaskedResultToArchive(fileName, extension, maskedTex
   return {
     exportExtension,
     relativePath,
-    absolutePath
+    absolutePath,
+    folder
   }
 }
 

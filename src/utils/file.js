@@ -10,6 +10,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx']
+export const WORD_LIBRARY_FILE_TYPES = ['docx', 'txt', 'md']
 
 export async function pickFile() {
   const selected = await open({
@@ -76,6 +77,31 @@ export async function readContractFile(fileSource) {
     text = extractLegacyDocText(bytes)
   } else {
     throw new Error('暂不支持该文件格式。')
+  }
+
+  return {
+    path: fileSource,
+    fileName,
+    extension,
+    size,
+    sizeLabel: bytesToMegabytes(size),
+    text: text.trim()
+  }
+}
+
+export async function readWordLibraryFile(fileSource) {
+  const bytes = await readFile(fileSource)
+  const size = bytes.byteLength ?? bytes.length
+  const fileName = fileSource.split('/').pop() || '未命名文件'
+  const extension = fileName.split('.').pop()?.toLowerCase() || ''
+
+  let text = ''
+  if (extension === 'docx') {
+    text = await extractDocxText(bytes)
+  } else if (extension === 'txt' || extension === 'md') {
+    text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+  } else {
+    throw new Error('仅支持导入 DOCX、TXT、MD 文本文件。')
   }
 
   return {

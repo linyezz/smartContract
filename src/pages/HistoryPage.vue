@@ -72,6 +72,7 @@
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">查看</el-button>
           <el-button link @click="openPath(row.exportPath)" :disabled="!row.exportPath">打开结果</el-button>
+          <el-button link @click="saveAsRecord(row)">另存脱敏文档</el-button>
           <el-button link @click="reExportRecord(row)">重新导出</el-button>
           <el-button link type="danger" @click="deleteSelected([row.id])">删除</el-button>
         </template>
@@ -110,6 +111,7 @@
           <span>脱敏归档地址</span>
           <code>{{ activeRecord.exportPath || '未导出' }}</code>
           <el-button link @click="openPath(activeRecord.exportPath)" :disabled="!activeRecord.exportPath">打开脱敏文件</el-button>
+          <el-button link @click="saveAsRecord(activeRecord)">另存脱敏文档</el-button>
         </div>
       </div>
       <div class="detail-grid">
@@ -132,6 +134,7 @@ import dayjs from 'dayjs'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import { useHistoryStore } from '../store/history'
+import { saveMaskedResult } from '../utils/file'
 import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
 
 const historyStore = useHistoryStore()
@@ -214,12 +217,19 @@ async function reExportRecord(row) {
     const exported = await exportMaskedResultToArchive(
       row.fileName,
       row.extension || row.fileName.split('.').pop()?.toLowerCase() || 'docx',
-      row.resultText
+      row.resultText,
+      {
+        user: {
+          id: row.operatorId,
+          name: row.operatorName
+        }
+      }
     )
     const updated = historyStore.updateRecord(row.id, {
       exportExtension: exported.exportExtension,
       exportPath: exported.absolutePath,
-      exportRelativePath: exported.relativePath
+      exportRelativePath: exported.relativePath,
+      exportFolder: exported.folder
     })
     if (activeRecord.value?.id === row.id) {
       activeRecord.value = updated
@@ -229,6 +239,25 @@ async function reExportRecord(row) {
   } catch (error) {
     debugError.value = String(error?.stack || error?.message || error)
     ElMessage.error(error.message || '重新导出失败')
+  }
+}
+
+async function saveAsRecord(row) {
+  if (!row?.resultText) {
+    ElMessage.warning('当前记录没有可另存的脱敏结果')
+    return
+  }
+
+  try {
+    const output = await saveMaskedResult(row.fileName, row.resultText)
+    if (!output.saved) {
+      return
+    }
+    debugError.value = ''
+    ElMessage.success(`脱敏文档已另存为 ${output.exportExtension?.toUpperCase() || '文件'}`)
+  } catch (error) {
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(error.message || '另存脱敏文档失败')
   }
 }
 

@@ -6,6 +6,7 @@ import {
   saveCurrentUserId,
   saveMembers
 } from '../utils/storage'
+import { normalizeWecomProfile, requestWecomLogin } from '../utils/wecom'
 
 export const useAuthStore = defineStore('auth', () => {
   const members = ref([])
@@ -40,6 +41,74 @@ export const useAuthStore = defineStore('auth', () => {
     currentUser.value = user
     void saveCurrentUserId(user.id)
     return { success: true, user }
+  }
+
+  async function upsertMember(nextMember) {
+    const index = members.value.findIndex((item) => item.id === nextMember.id)
+    const nextMembers =
+      index === -1
+        ? [nextMember, ...members.value]
+        : members.value.map((item) => (item.id === nextMember.id ? nextMember : item))
+
+    members.value = nextMembers
+    await saveMembers(nextMembers)
+    return nextMember
+  }
+
+  function buildWecomMember(userInfo) {
+    const profile = normalizeWecomProfile(userInfo)
+    const existingUser = members.value.find(
+      (item) =>
+        item.wecomUserId === profile.wecomUserId ||
+        (profile.username && item.username === profile.username)
+    )
+
+    return {
+      id: existingUser?.id || `wecom-${profile.wecomUserId || Date.now()}`,
+      username: profile.username || existingUser?.username || `wecom_${Date.now()}`,
+      password: existingUser?.password || '',
+      name: profile.name,
+      role: existingUser?.role || 'user',
+      title: profile.title,
+      email: profile.email,
+      phone: profile.phone,
+      avatar: profile.avatar,
+      customWords: existingUser?.customWords || [],
+      loginType: 'wecom',
+      wecomUserId: profile.wecomUserId,
+      wecomProfile: profile.rawProfile
+    }
+  }
+
+  async function loginByWecomUuid(uuid) {
+    refreshMembers()
+
+    try {
+      const result = await requestWecomLogin(uuid)
+      const userInfo = result?.user_info || result?.userInfo
+
+      if (!result?.access_token || !userInfo) {
+        return {
+          success: false,
+          message: result?.message || '企微登录失败，未获取到用户信息'
+        }
+      }
+
+      const user = await upsertMember(buildWecomMember(userInfo))
+      currentUser.value = user
+      await saveCurrentUserId(user.id)
+
+      return {
+        success: true,
+        user,
+        tokenData: result
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error?.message || '企微登录失败'
+      }
+    }
   }
 
   function updateProfile(payload) {
@@ -86,6 +155,7 @@ export const useAuthStore = defineStore('auth', () => {
     bootstrap,
     refreshMembers,
     loginByPassword,
+    loginByWecomUuid,
     updateProfile,
     setCustomWords,
     addMember,
