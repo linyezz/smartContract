@@ -4,10 +4,12 @@ export const WECOM_CONFIG = {
   loginUrl:
     'https://idaas-auth.ecmax.cn/sso/render?thirdOAuthType=WORK_WECHAT_SCAN&state=browser_plugin',
   baseUrl: 'https://idaas-auth.ecmax.cn',
-  appDeskId: '1771048544751636482',
-  appDeskVersion: 'v3.2',
-  platformClientId: 'jd_image_replacer',
-  clientAuthorization: 'Basic YnJvd3Nlcl9wbHVnaW46c2VjcmV0',
+  appDeskId: '2042146917908316161',
+  // appDeskId: '1771048544751636482',
+  appDeskVersion: '1.0.0',
+  platformClientId: 'rpa_app_desk',
+  // clientAuthorization: 'Basic YnJvd3Nlcl9wbHVnaW46c2VjcmV0',
+  clientAuthorization: 'Basic cnBhX2FwcF9kZXNrOnNlY3JldA',
   macStorageKey: 'ecmax.wecom.macId'
 }
 

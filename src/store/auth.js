@@ -104,6 +104,7 @@ export const useAuthStore = defineStore('auth', () => {
         tokenData: result
       }
     } catch (error) {
+      console.error(error)
       return {
         success: false,
         message: error?.message || '企微登录失败'

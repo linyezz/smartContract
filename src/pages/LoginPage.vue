@@ -7,14 +7,14 @@
         针对法务团队设计的合同脱敏桌面客户端，支持 PDF、DOC、DOCX
         文件解析、智能识别敏感字段、历史追踪和本地成员权限管理。
       </p>
-      <div class="hero-panel content-card">
+      <!-- <div class="hero-panel content-card">
         <p>默认管理员账号</p>
         <strong class="mono-text">admin / 123456</strong>
       </div>
       <div class="hero-panel content-card subtle">
         <p>企业微信登录</p>
         <strong>支持自动同步企微用户 ID、名称与头像</strong>
-      </div>
+      </div> -->
     </div>
 
     <div class="content-card login-card">
@@ -39,15 +39,15 @@
 
       <template v-if="activeTab === 'wecom'">
         <h2>企业微信登录</h2>
-        <p class="section-subtitle">
+        <!-- <p class="section-subtitle">
           点击后会拉起企微扫码授权，登录成功后会自动写入本地成员信息。
-        </p>
-        <div class="tips-card">
+        </p> -->
+        <!-- <div class="tips-card">
           <p class="tips-title">授权说明</p>
           <p>
             请使用已开通权限的企业微信账号扫码登录。首次登录会自动在本地创建成员，并保存姓名、用户标识与头像信息。
           </p>
-        </div>
+        </div> -->
         <el-button
           type="primary"
           size="large"
@@ -109,8 +109,8 @@ const activeTab = ref('wecom')
 const wecomLoading = ref(false)
 const debugMessage = ref('')
 const form = reactive({
-  username: 'admin',
-  password: '123456'
+  username: '',
+  password: ''
 })
 
 let loginPopup = null
