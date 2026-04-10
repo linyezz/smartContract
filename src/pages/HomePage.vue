@@ -86,7 +86,13 @@
 
     <section class="content-card panel">
       <SectionHeader title="对比预览" subtitle="左侧原文，右侧脱敏结果。" />
-      <div class="preview-grid">
+      <PdfComparePreview
+        v-if="currentFile?.extension === 'pdf'"
+        :source-path="currentFile.path"
+        :source-bytes="currentFile.bytes"
+        :hit-list="result.hitList"
+      />
+      <div v-else class="preview-grid">
         <div class="preview-panel">
           <p class="preview-title">原文</p>
           <pre>{{ result.originalText || '请先上传合同文件并执行脱敏。' }}</pre>
@@ -106,11 +112,13 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useAuthStore } from '../store/auth'
 import { useHistoryStore } from '../store/history'
 import SectionHeader from '../components/SectionHeader.vue'
+import PdfComparePreview from '../components/PdfComparePreview.vue'
 import { presetTypeOptions, desensitizeText } from '../utils/desensitize'
 import { pickFile, readContractFile, saveMaskedResult } from '../utils/file'
 import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
@@ -141,6 +149,7 @@ const result = reactive({
   sourcePath: ''
 })
 const debugError = ref('')
+let unlistenNativeDragDrop = null
 
 const visibleWords = computed(() => authStore.currentUser?.customWords || [])
 const modeLabel = computed(() => {
@@ -208,15 +217,20 @@ async function handleDrop(event) {
     return
   }
 
-  const firstFile = droppedFiles[0]
-  const droppedPath = firstFile.path
-  if (!droppedPath) {
-    ElMessage.warning('当前环境未识别到拖拽文件路径，请改用点击上传。')
+  try {
+    await applySelectedFile(droppedFiles[0])
+  } catch (error) {
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(error.message || '拖拽文件读取失败')
+  }
+}
+
+async function applyNativeDroppedPath(path) {
+  if (!path) {
     return
   }
-
   try {
-    await applySelectedFile(droppedPath)
+    await applySelectedFile(path)
   } catch (error) {
     debugError.value = String(error?.stack || error?.message || error)
     ElMessage.error(error.message || '拖拽文件读取失败')
@@ -264,7 +278,10 @@ async function handleMask() {
         currentFile.value.extension,
         response.maskedText,
         {
-          user: authStore.currentUser
+          user: authStore.currentUser,
+          sourcePath: currentFile.value.path,
+          sourceBytes: currentFile.value.bytes,
+          hitList: response.hitList
         }
       )
       result.exportPath = exported.absolutePath
@@ -293,7 +310,11 @@ async function handleDownload() {
     return
   }
   try {
-    const output = await saveMaskedResult(currentFile.value.fileName, result.maskedText)
+    const output = await saveMaskedResult(currentFile.value.fileName, result.maskedText, {
+      sourcePath: currentFile.value.path,
+      sourceBytes: currentFile.value.bytes,
+      hitList: result.hitList
+    })
     if (output.saved) {
       debugError.value = ''
       result.exportPath = output.path
@@ -316,6 +337,36 @@ async function handleOpenExportPath() {
     ElMessage.error(error.message || '打开路径失败')
   }
 }
+
+getCurrentWebview().onDragDropEvent((event) => {
+  const payload = event.payload
+
+  if (payload.type === 'enter' || payload.type === 'over') {
+    dragState.isOver = true
+    return
+  }
+
+  if (payload.type === 'leave') {
+    resetDragState()
+    return
+  }
+
+  if (payload.type === 'drop') {
+    resetDragState()
+    const [firstPath] = payload.paths || []
+    void applyNativeDroppedPath(firstPath)
+  }
+}).then((unlisten) => {
+  unlistenNativeDragDrop = unlisten
+}).catch((error) => {
+  debugError.value = String(error?.stack || error?.message || error)
+})
+
+onBeforeUnmount(() => {
+  if (unlistenNativeDragDrop) {
+    void unlistenNativeDragDrop()
+  }
+})
 </script>
 
 <style scoped>

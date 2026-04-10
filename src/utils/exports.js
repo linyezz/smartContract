@@ -2,6 +2,7 @@ import dayjs from 'dayjs'
 import { BaseDirectory, appLocalDataDir, join } from '@tauri-apps/api/path'
 import { exists, mkdir, stat, writeFile } from '@tauri-apps/plugin-fs'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { buildStyledMaskedPdfBytes, isPdfSource } from './pdf'
 
 function sanitizeFileName(fileName) {
   return fileName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
@@ -163,11 +164,23 @@ export function getExportDescriptor(fileName, extension) {
   }
 }
 
-export async function buildMaskedDocument(fileName, extension, maskedText) {
+export async function buildMaskedDocument(fileName, extension, maskedText, options = {}) {
   const exportExtension = resolveExportExtension(extension)
-  const bytes = exportExtension === 'pdf'
-    ? await generatePdfBytes(fileName, maskedText)
-    : await generateDocxBytes(maskedText)
+  let bytes
+
+  if (exportExtension === 'pdf') {
+    if (isPdfSource(extension) && (options.sourcePath || options.sourceBytes)) {
+      try {
+        bytes = await buildStyledMaskedPdfBytes(options.sourceBytes || options.sourcePath, options.hitList)
+      } catch {
+        bytes = await generatePdfBytes(fileName, maskedText)
+      }
+    } else {
+      bytes = await generatePdfBytes(fileName, maskedText)
+    }
+  } else {
+    bytes = await generateDocxBytes(maskedText)
+  }
 
   return {
     bytes,
@@ -186,7 +199,7 @@ export async function exportMaskedResultToArchive(fileName, extension, maskedTex
     throw describeError('创建归档目录', error)
   }
 
-  const { bytes, exportExtension } = await buildMaskedDocument(fileName, extension, maskedText)
+  const { bytes, exportExtension } = await buildMaskedDocument(fileName, extension, maskedText, options)
   const stamp = dayjs().format('YYYYMMDD-HHmmss')
   let fileNameToUse = buildExportName(fileName, extension, stamp)
   let relativePath = `${folder}/${fileNameToUse}`

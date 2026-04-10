@@ -7,9 +7,12 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const WECOM_LOGIN_EVENT: &str = "wecom-login-callback";
+const WECOM_LOGIN_DEBUG_EVENT: &str = "wecom-login-debug";
 const WECOM_LOGIN_WINDOW_LABEL: &str = "wecom-login";
 const WECOM_CALLBACK_URL: &str = "https://tauri.localhost/__wecom_callback__";
 const WECOM_CLIENT_AUTHORIZATION_HEADER: &str = "clientAuthorization";
+const WECOM_WEBVIEW_USER_AGENT: &str =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
 const WECOM_LOGIN_INIT_SCRIPT: &str = r#"
 (() => {
   const relayMessage = (payload) => {
@@ -113,17 +116,27 @@ fn stringify_json_value(value: Value) -> Option<String> {
 }
 
 #[tauri::command]
-fn open_wecom_login_window(app: AppHandle, login_url: String) -> Result<(), String> {
+async fn open_wecom_login_window(app: AppHandle, login_url: String) -> Result<(), String> {
   // 已经打开过登录窗口时，直接聚焦，避免重复打开多个扫码窗。
   if let Some(window) = app.get_webview_window(WECOM_LOGIN_WINDOW_LABEL) {
     let _ = window.set_focus();
+    let _ = app.emit_to("main", WECOM_LOGIN_DEBUG_EVENT, "企微登录窗口已存在，已尝试聚焦。");
     return Ok(());
   }
 
   let app_handle = app.clone();
   let window_label = WECOM_LOGIN_WINDOW_LABEL.to_string();
+  let parsed_login_url: Url = login_url
+    .parse()
+    .map_err(|error| format!("企微登录地址无效: {error}"))?;
 
-  WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::External(login_url.parse().map_err(|error| format!("企微登录地址无效: {error}"))?))
+  let _ = app.emit_to(
+    "main",
+    WECOM_LOGIN_DEBUG_EVENT,
+    format!("准备打开企微登录页面：{}", parsed_login_url),
+  );
+
+  WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::External(parsed_login_url))
     .title("企业微信登录")
     .inner_size(640.0, 760.0)
     .min_inner_size(480.0, 640.0)
@@ -131,9 +144,15 @@ fn open_wecom_login_window(app: AppHandle, login_url: String) -> Result<(), Stri
     .resizable(true)
     .focused(true)
     .visible(true)
+    .user_agent(WECOM_WEBVIEW_USER_AGENT)
     // 给远端登录页注入一个假的 opener.postMessage，把浏览器回调桥接成 Tauri 可拦截的地址。
     .initialization_script(WECOM_LOGIN_INIT_SCRIPT)
     .on_navigation(move |url| {
+      let _ = app_handle.emit_to(
+        "main",
+        WECOM_LOGIN_DEBUG_EVENT,
+        format!("企微登录窗口导航到：{}", url),
+      );
       // 一旦命中我们约定的回调地址，就说明子窗口已经拿到了 uuid。
       if url.as_str().starts_with(WECOM_CALLBACK_URL) {
         if let Some(uuid) = extract_uuid_from_callback(url) {
@@ -155,6 +174,8 @@ fn open_wecom_login_window(app: AppHandle, login_url: String) -> Result<(), Stri
     })
     .build()
     .map_err(|error| format!("创建企微登录窗口失败: {error}"))?;
+
+  let _ = app.emit_to("main", WECOM_LOGIN_DEBUG_EVENT, "企微登录窗口已创建。");
 
   Ok(())
 }

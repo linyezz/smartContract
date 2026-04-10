@@ -99,7 +99,11 @@ import { listen } from '@tauri-apps/api/event'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
-import { openWecomLoginWindow, WECOM_LOGIN_EVENT } from '../utils/wecom'
+import {
+  openWecomLoginWindow,
+  WECOM_LOGIN_DEBUG_EVENT,
+  WECOM_LOGIN_EVENT
+} from '../utils/wecom'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -115,6 +119,7 @@ const form = reactive({
 
 let loginPopup = null
 let unlistenWecomEvent = null
+let unlistenWecomDebugEvent = null
 
 async function closeLoginPopup() {
   loginPopup = null
@@ -174,9 +179,18 @@ listen(WECOM_LOGIN_EVENT, (event) => {
   unlistenWecomEvent = unlisten
 })
 
+listen(WECOM_LOGIN_DEBUG_EVENT, (event) => {
+  debugMessage.value = String(event.payload || '')
+}).then((unlisten) => {
+  unlistenWecomDebugEvent = unlisten
+})
+
 onBeforeUnmount(() => {
   if (unlistenWecomEvent) {
     void unlistenWecomEvent()
+  }
+  if (unlistenWecomDebugEvent) {
+    void unlistenWecomDebugEvent()
   }
   void closeLoginPopup()
 })

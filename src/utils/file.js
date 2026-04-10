@@ -1,16 +1,46 @@
 import mammoth from 'mammoth'
-import * as pdfjsLib from 'pdfjs-dist'
 import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { buildMaskedDocument, getExportDescriptor } from './exports'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString()
+import { extractPdfText, uint8ArrayToArrayBuffer } from './pdf'
 
 export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx']
 export const WORD_LIBRARY_FILE_TYPES = ['docx', 'txt', 'md']
+
+function cloneUint8Array(bytes) {
+  return new Uint8Array(bytes)
+}
+
+async function toUint8ArrayFromWebFile(file) {
+  const buffer = await file.arrayBuffer()
+  return new Uint8Array(buffer)
+}
+
+function normalizeNameFromPath(path) {
+  return String(path || '').split('/').pop() || '未命名文件'
+}
+
+async function resolveFilePayload(fileSource) {
+  if (typeof fileSource === 'string') {
+    const bytes = await readFile(fileSource)
+    return {
+      path: fileSource,
+      fileName: normalizeNameFromPath(fileSource),
+      bytes
+    }
+  }
+
+  if (fileSource instanceof File) {
+    const bytes = await toUint8ArrayFromWebFile(fileSource)
+    return {
+      path: fileSource.path || '',
+      fileName: fileSource.name || '未命名文件',
+      bytes
+    }
+  }
+
+  throw new Error('无法识别文件来源。')
+}
 
 export async function pickFile() {
   const selected = await open({
@@ -30,22 +60,6 @@ function bytesToMegabytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-function uint8ArrayToArrayBuffer(bytes) {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-}
-
-async function extractPdfText(bytes) {
-  const loadingTask = pdfjsLib.getDocument({ data: bytes })
-  const pdf = await loadingTask.promise
-  const pageTexts = []
-  for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
-    const page = await pdf.getPage(pageIndex)
-    const content = await page.getTextContent()
-    pageTexts.push(content.items.map((item) => item.str).join(' '))
-  }
-  return pageTexts.join('\n\n')
-}
-
 async function extractDocxText(bytes) {
   const result = await mammoth.extractRawText({
     arrayBuffer: uint8ArrayToArrayBuffer(bytes)
@@ -59,20 +73,21 @@ function extractLegacyDocText(bytes) {
 }
 
 export async function readContractFile(fileSource) {
-  const bytes = await readFile(fileSource)
+  const payload = await resolveFilePayload(fileSource)
+  const bytes = cloneUint8Array(payload.bytes)
   const size = bytes.byteLength ?? bytes.length
   if (size > 50 * 1024 * 1024) {
     throw new Error('文件超过 50MB，请更换更小的合同文件。')
   }
 
-  const fileName = fileSource.split('/').pop() || '未命名文件'
+  const fileName = payload.fileName
   const extension = fileName.split('.').pop()?.toLowerCase() || ''
 
   let text = ''
   if (extension === 'pdf') {
-    text = await extractPdfText(bytes)
+    text = await extractPdfText(cloneUint8Array(bytes))
   } else if (extension === 'docx') {
-    text = await extractDocxText(bytes)
+    text = await extractDocxText(cloneUint8Array(bytes))
   } else if (extension === 'doc') {
     text = extractLegacyDocText(bytes)
   } else {
@@ -80,19 +95,21 @@ export async function readContractFile(fileSource) {
   }
 
   return {
-    path: fileSource,
+    path: payload.path,
     fileName,
     extension,
     size,
     sizeLabel: bytesToMegabytes(size),
-    text: text.trim()
+    text: text.trim(),
+    bytes: cloneUint8Array(bytes)
   }
 }
 
 export async function readWordLibraryFile(fileSource) {
-  const bytes = await readFile(fileSource)
+  const payload = await resolveFilePayload(fileSource)
+  const bytes = payload.bytes
   const size = bytes.byteLength ?? bytes.length
-  const fileName = fileSource.split('/').pop() || '未命名文件'
+  const fileName = payload.fileName
   const extension = fileName.split('.').pop()?.toLowerCase() || ''
 
   let text = ''
@@ -105,7 +122,7 @@ export async function readWordLibraryFile(fileSource) {
   }
 
   return {
-    path: fileSource,
+    path: payload.path,
     fileName,
     extension,
     size,
@@ -114,7 +131,7 @@ export async function readWordLibraryFile(fileSource) {
   }
 }
 
-export async function saveMaskedResult(defaultName, content) {
+export async function saveMaskedResult(defaultName, content, options = {}) {
   const extension = defaultName.split('.').pop()?.toLowerCase() || 'docx'
   const exportInfo = getExportDescriptor(defaultName, extension)
   const target = await save({
@@ -127,7 +144,7 @@ export async function saveMaskedResult(defaultName, content) {
       path: ''
     }
   }
-  const { bytes, exportExtension } = await buildMaskedDocument(defaultName, extension, content)
+  const { bytes, exportExtension } = await buildMaskedDocument(defaultName, extension, content, options)
   await writeFile(target, bytes)
   return {
     saved: true,

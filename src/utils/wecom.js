@@ -14,6 +14,7 @@ export const WECOM_CONFIG = {
 }
 
 export const WECOM_LOGIN_EVENT = 'wecom-login-callback'
+export const WECOM_LOGIN_DEBUG_EVENT = 'wecom-login-debug'
 
 export function getWecomMachineId() {
   const existing = localStorage.getItem(WECOM_CONFIG.macStorageKey)

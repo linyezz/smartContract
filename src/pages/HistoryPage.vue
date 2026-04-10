@@ -222,7 +222,9 @@ async function reExportRecord(row) {
         user: {
           id: row.operatorId,
           name: row.operatorName
-        }
+        },
+        sourcePath: row.sourcePath,
+        hitList: row.hitList
       }
     )
     const updated = historyStore.updateRecord(row.id, {
@@ -249,7 +251,10 @@ async function saveAsRecord(row) {
   }
 
   try {
-    const output = await saveMaskedResult(row.fileName, row.resultText)
+    const output = await saveMaskedResult(row.fileName, row.resultText, {
+      sourcePath: row.sourcePath,
+      hitList: row.hitList
+    })
     if (!output.saved) {
       return
     }
