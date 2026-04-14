@@ -97,14 +97,19 @@
     <section class="content-card panel">
       <SectionHeader title="对比预览" subtitle="左侧原文，右侧脱敏结果。">
         <template #extra>
-          <el-button plain :disabled="!currentFile && !result.originalText" @click="previewFullscreen = true">
+          <el-button plain :disabled="processing || (!currentFile && !result.originalText)" @click="previewFullscreen = true">
             全屏预览
           </el-button>
         </template>
       </SectionHeader>
       <div class="preview-shell">
+        <div v-if="showProcessingPreviewState" class="preview-state-card">
+          <span class="preview-state-badge">{{ previewStageLabel }}</span>
+          <strong>{{ previewStageTitle }}</strong>
+          <p>{{ previewStageDescription }}</p>
+        </div>
         <PdfComparePreview
-          v-if="showPdfVisualPreview"
+          v-else-if="showPdfVisualPreview"
           :source-path="currentFile.path"
           :source-bytes="currentFile.bytes"
           :hit-list="result.hitList"
@@ -139,8 +144,13 @@
 
   <el-dialog v-model="previewFullscreen" title="对比预览" fullscreen class="preview-dialog">
     <div class="preview-dialog-body">
+      <div v-if="showProcessingPreviewState" class="preview-state-card fullscreen-state-card">
+        <span class="preview-state-badge">{{ previewStageLabel }}</span>
+        <strong>{{ previewStageTitle }}</strong>
+        <p>{{ previewStageDescription }}</p>
+      </div>
       <PdfComparePreview
-        v-if="showPdfVisualPreview"
+        v-else-if="showPdfVisualPreview"
         :source-path="currentFile?.path"
         :source-bytes="currentFile?.bytes"
         :hit-list="result.hitList"
@@ -212,6 +222,7 @@ const result = reactive({
 })
 const debugError = ref('')
 const previewFullscreen = ref(false)
+const processingStage = ref('')
 let unlistenNativeDragDrop = null
 
 const visibleWords = computed(() => authStore.currentUser?.customWords || [])
@@ -232,7 +243,15 @@ const modeLabel = computed(() => {
   }
   return '未选择'
 })
+const showProcessingPreviewState = computed(() => processing.value && Boolean(currentFile.value))
 const showPdfVisualPreview = computed(() => currentFile.value?.extension === 'pdf')
+const previewStageLabel = computed(() => processingStage.value === 'masking' ? '脱敏中' : '识别中')
+const previewStageTitle = computed(() => processingStage.value === 'masking'
+  ? '正在生成脱敏结果'
+  : '正在识别合同内容')
+const previewStageDescription = computed(() => processingStage.value === 'masking'
+  ? '敏感信息正在匹配并替换，完成后会再统一渲染 PDF 预览。'
+  : '系统正在执行 OCR 与实体识别，处理中暂不渲染预览，避免页面频繁闪动。')
 const pdfAnalysisAlert = computed(() => {
   const analysis = currentFile.value?.analysis
   if (!analysis || analysis.type !== 'pdf') {
@@ -466,6 +485,7 @@ async function handleMask() {
   }
 
   processing.value = true
+  processingStage.value = 'recognizing'
   debugError.value = ''
   try {
     await ensurePdfOcrReady()
@@ -474,6 +494,7 @@ async function handleMask() {
       ? await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
       : []
 
+    processingStage.value = 'masking'
     const response = desensitizeText({
       text: currentFile.value.text,
       enableSmart: form.enableSmart,
@@ -528,6 +549,7 @@ async function handleMask() {
     ElMessage.error(error.message || '脱敏失败')
   } finally {
     processing.value = false
+    processingStage.value = ''
   }
 }
 
@@ -612,6 +634,41 @@ onBeforeUnmount(() => {
   margin-bottom: 18px;
 }
 
+.preview-state-card {
+  min-height: 420px;
+  border-radius: 20px;
+  border: 1px dashed rgba(47, 111, 237, 0.28);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.96));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.preview-state-badge {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(47, 111, 237, 0.1);
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.preview-state-card strong {
+  font-size: 20px;
+  color: var(--text-primary);
+}
+
+.preview-state-card p {
+  margin: 0;
+  max-width: 420px;
+  color: var(--text-secondary);
+  line-height: 1.75;
+}
+
 .upload-box {
   padding: 24px;
   border: 1.5px dashed rgba(47, 111, 237, 0.32);
@@ -677,6 +734,10 @@ onBeforeUnmount(() => {
 .preview-dialog-body {
   height: 100%;
   overflow: hidden;
+}
+
+.fullscreen-state-card {
+  min-height: calc(100vh - 220px);
 }
 
 .fullscreen-grid {
