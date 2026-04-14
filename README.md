@@ -189,7 +189,7 @@ node ./scripts/build-ocr-worker.mjs
 当前工作流会分别在这些原生 runner 上构建 OCR sidecar 后再执行 Tauri 打包：
 
 - `macos-14`：Apple Silicon macOS 包
-- `macos-13`：Intel macOS 包
+- `macos-15-intel`：Intel macOS 包
 - `windows-latest`：Windows x64 包
 
 CI 流程会自动执行：

@@ -18,7 +18,7 @@ jobs:
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
             python-version: '3.12'
-          - runner: macos-13
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
             python-version: '3.12'
