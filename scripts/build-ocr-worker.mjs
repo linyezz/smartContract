@@ -64,6 +64,10 @@ run(
     workDir,
     '--specpath',
     specDir,
+    // RapidOCR ships config.yaml and ONNX model files as package data.
+    // Without collecting them explicitly, the packaged Windows worker fails at runtime.
+    '--collect-all',
+    'rapidocr_onnxruntime',
     workerScript
   ],
   {

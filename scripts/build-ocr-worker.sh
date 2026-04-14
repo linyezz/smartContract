@@ -19,6 +19,7 @@ PYINSTALLER_CONFIG_DIR="$CONFIG_DIR" "$VENV_DIR/bin/python" -m PyInstaller \
   --distpath "$DIST_DIR" \
   --workpath "$WORK_DIR" \
   --specpath "$SPEC_DIR" \
+  --collect-all rapidocr_onnxruntime \
   "$WORKER_SCRIPT"
 
 mkdir -p "$TARGET_DIR"
