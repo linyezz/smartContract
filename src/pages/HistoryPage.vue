@@ -89,7 +89,7 @@
       />
     </div>
 
-    <div v-if="debugError" class="debug-card">
+    <div v-if="isDev && debugError" class="debug-card">
       <span class="debug-label">调试信息</span>
       <pre>{{ debugError }}</pre>
     </div>
@@ -139,6 +139,7 @@ import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
 
 const historyStore = useHistoryStore()
 historyStore.bootstrap()
+const isDev = import.meta.env.DEV
 
 const filters = reactive({
   range: [],
@@ -178,7 +179,7 @@ function resetFilters() {
 }
 
 async function deleteSelected(overrideIds) {
-  const ids = overrideIds || selectedIds.value
+  const ids = Array.isArray(overrideIds) ? overrideIds : selectedIds.value
   if (!ids.length) {
     return
   }
@@ -188,6 +189,8 @@ async function deleteSelected(overrideIds) {
     })
     historyStore.deleteRecords(ids)
     selectedIds.value = []
+    const totalPages = Math.max(1, Math.ceil(filteredRecords.value.length / pagination.pageSize))
+    pagination.page = Math.min(pagination.page, totalPages)
     ElMessage.success('已删除所选记录')
   } catch {
     // noop

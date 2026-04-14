@@ -14,17 +14,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - runner: macos-14
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-          - platform: macos-latest
+            python-version: '3.12'
+          - runner: macos-13
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
-          - platform: windows-latest
-            target: ''
-            args: --bundles nsis
+            python-version: '3.12'
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --bundles nsis --target x86_64-pc-windows-msvc
+            python-version: '3.12'
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -35,6 +38,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: src-tauri/resources/ocr-worker/requirements.txt
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
@@ -48,6 +58,22 @@ jobs:
 
       - name: Install Frontend Dependencies
         run: npm install
+
+      - name: Setup RapidOCR Worker Environment
+        run: node ./scripts/setup-ocr-worker.mjs
+
+      - name: Build RapidOCR Worker Binary
+        run: node ./scripts/build-ocr-worker.mjs
+
+      - name: Verify RapidOCR Worker Artifact
+        shell: bash
+        run: |
+          ls -lah src-tauri/binaries
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            test -f src-tauri/binaries/rapidocr-worker.exe
+          else
+            test -f src-tauri/binaries/rapidocr-worker
+          fi
 
       - name: Build With Tauri Action
         uses: tauri-apps/tauri-action@v0

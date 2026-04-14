@@ -2,13 +2,37 @@ import mammoth from 'mammoth'
 import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { buildMaskedDocument, getExportDescriptor } from './exports'
-import { extractPdfText, uint8ArrayToArrayBuffer } from './pdf'
+import { extractPdfTextWithDiagnostics, uint8ArrayToArrayBuffer } from './pdf'
 
 export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx']
 export const WORD_LIBRARY_FILE_TYPES = ['docx', 'txt', 'md']
 
 function cloneUint8Array(bytes) {
   return new Uint8Array(bytes)
+}
+
+function countNormalizedChars(value) {
+  return String(value || '')
+    .replace(/\s+/g, '')
+    .trim()
+    .length
+}
+
+async function buildPdfContractSnapshot(base, bytes, extra = {}) {
+  const normalizedBytes = cloneUint8Array(bytes)
+  const extraction = await extractPdfTextWithDiagnostics(normalizedBytes)
+
+  return {
+    ...base,
+    text: extraction.text.trim(),
+    analysis: {
+      type: 'pdf',
+      ...extraction.diagnostics,
+      pages: extraction.pages
+    },
+    bytes: normalizedBytes,
+    ...extra
+  }
 }
 
 async function toUint8ArrayFromWebFile(file) {
@@ -84,8 +108,22 @@ export async function readContractFile(fileSource) {
   const extension = fileName.split('.').pop()?.toLowerCase() || ''
 
   let text = ''
+  let analysis = null
   if (extension === 'pdf') {
-    text = await extractPdfText(cloneUint8Array(bytes))
+    const pdfSnapshot = await buildPdfContractSnapshot({
+      path: payload.path,
+      fileName,
+      extension,
+      size,
+      sizeLabel: bytesToMegabytes(size)
+    }, cloneUint8Array(bytes))
+
+    return {
+      ...pdfSnapshot,
+      ocr: {
+        applied: false
+      }
+    }
   } else if (extension === 'docx') {
     text = await extractDocxText(cloneUint8Array(bytes))
   } else if (extension === 'doc') {
@@ -101,7 +139,100 @@ export async function readContractFile(fileSource) {
     size,
     sizeLabel: bytesToMegabytes(size),
     text: text.trim(),
+    analysis,
     bytes: cloneUint8Array(bytes)
+  }
+}
+
+export async function applyPdfOcrResult(contractFile, ocrResult) {
+  if (!contractFile || contractFile.extension !== 'pdf') {
+    throw new Error('只有 PDF 文件支持应用 OCR 结果。')
+  }
+  if (!ocrResult?.outputPath) {
+    throw new Error('OCR 结果缺少输出文件路径。')
+  }
+
+  const ocrBytes = await readFile(ocrResult.outputPath)
+  return buildPdfContractSnapshot({
+    ...contractFile
+  }, ocrBytes, {
+    ocr: {
+      applied: true,
+      tool: ocrResult.tool || 'ocrmypdf',
+      outputPath: ocrResult.outputPath,
+      language: ocrResult.language || 'chi_sim+eng',
+      commandLabel: ocrResult.commandLabel || '',
+      sidecarText: ocrResult.sidecarText || ''
+    }
+  })
+}
+
+export function applyPdfWorkerOcrResult(contractFile, workerResult) {
+  if (!contractFile || contractFile.extension !== 'pdf') {
+    throw new Error('只有 PDF 文件支持应用本地 OCR 结果。')
+  }
+
+  const originalPages = contractFile.analysis?.pages || []
+  const workerPages = new Map((workerResult?.pages || []).map((page) => [page.pageNumber, page]))
+
+  const mergedPages = originalPages.map((page) => {
+    const workerPage = workerPages.get(page.pageNumber)
+    const nextText = page.hasUsableText ? page.text || '' : workerPage?.text || page.text || ''
+    const normalizedCharCount = countNormalizedChars(nextText)
+
+    return {
+      ...page,
+      text: nextText,
+      textLength: nextText.length,
+      normalizedCharCount,
+      hasUsableText: normalizedCharCount >= 8 || page.hasUsableText,
+      ocrApplied: Boolean(workerPage),
+      ocrLineCount: workerPage?.lineCount || 0,
+      ocrAvgScore: workerPage?.avgScore ?? null,
+      ocrImageWidth: workerPage?.imageWidth || null,
+      ocrImageHeight: workerPage?.imageHeight || null,
+      ocrLines: (workerPage?.lines || []).map((line) => ({
+        text: line.text || '',
+        score: line.score ?? null,
+        left: Number(line.left || 0),
+        top: Number(line.top || 0),
+        right: Number(line.right || 0),
+        bottom: Number(line.bottom || 0)
+      }))
+    }
+  })
+
+  const pagesWithText = mergedPages.filter((page) => page.hasUsableText).length
+  const totalPages = mergedPages.length
+  const pagesWithoutText = totalPages - pagesWithText
+  const mergedText = mergedPages
+    .map((page) => page.text || '')
+    .filter((text) => text.trim())
+    .join('\n\n')
+    .trim()
+
+  return {
+    ...contractFile,
+    text: mergedText,
+    analysis: {
+      ...contractFile.analysis,
+      kind: pagesWithoutText === 0 ? 'text' : pagesWithText === 0 ? 'image-only' : 'mixed',
+      totalPages,
+      pagesWithText,
+      pagesWithoutText,
+      totalNormalizedChars: mergedPages.reduce((sum, page) => sum + page.normalizedCharCount, 0),
+      blankPageRatio: totalPages ? pagesWithoutText / totalPages : 0,
+      hasUsableText: pagesWithText > 0,
+      ocrRecommended: pagesWithoutText > 0,
+      pages: mergedPages
+    },
+    ocr: {
+      applied: true,
+      tool: workerResult?.tool || 'rapidocr',
+      engine: workerResult?.engine || 'rapidocr_onnxruntime',
+      commandLabel: workerResult?.commandLabel || '',
+      pageCount: workerPages.size
+    }
   }
 }
 

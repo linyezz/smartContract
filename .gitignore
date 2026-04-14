@@ -2,3 +2,7 @@ node_modules
 dist
 src-tauri/target
 .DS_Store
+.venv-ocr-worker
+.pyinstaller-rapidocr-worker
+src-tauri/binaries/rapidocr-worker
+src-tauri/binaries/rapidocr-worker.exe

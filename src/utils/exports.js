@@ -169,9 +169,15 @@ export async function buildMaskedDocument(fileName, extension, maskedText, optio
   let bytes
 
   if (exportExtension === 'pdf') {
-    if (isPdfSource(extension) && (options.sourcePath || options.sourceBytes)) {
+    if (options.preferTextPdf) {
+      bytes = await generatePdfBytes(fileName, maskedText)
+    } else if (isPdfSource(extension) && (options.sourcePath || options.sourceBytes)) {
       try {
-        bytes = await buildStyledMaskedPdfBytes(options.sourceBytes || options.sourcePath, options.hitList)
+        bytes = await buildStyledMaskedPdfBytes(
+          options.sourceBytes || options.sourcePath,
+          options.hitList,
+          options.pageAnalyses
+        )
       } catch {
         bytes = await generatePdfBytes(fileName, maskedText)
       }

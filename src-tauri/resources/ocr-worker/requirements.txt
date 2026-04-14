@@ -1,0 +1,5 @@
+rapidocr_onnxruntime
+onnxruntime
+Pillow
+numpy
+pyinstaller

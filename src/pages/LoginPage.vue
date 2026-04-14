@@ -85,7 +85,7 @@
         </el-form>
       </template>
 
-      <div v-if="debugMessage" class="debug-card">
+      <div v-if="isDev && debugMessage" class="debug-card">
         <p class="debug-title">调试信息</p>
         <pre>{{ debugMessage }}</pre>
       </div>
@@ -108,6 +108,7 @@ import {
 const router = useRouter()
 const authStore = useAuthStore()
 authStore.bootstrap()
+const isDev = import.meta.env.DEV
 
 const activeTab = ref('wecom')
 const wecomLoading = ref(false)

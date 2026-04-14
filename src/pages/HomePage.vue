@@ -24,6 +24,16 @@
         <small>也可以直接把文件拖到这里</small>
       </div>
 
+      <el-alert
+        v-if="pdfAnalysisAlert"
+        class="pdf-analysis-alert"
+        :title="pdfAnalysisAlert.title"
+        :description="pdfAnalysisAlert.description"
+        :type="pdfAnalysisAlert.type"
+        show-icon
+        :closable="false"
+      />
+
       <el-space wrap class="mode-row">
         <el-switch v-model="form.enableSmart" active-text="启用智能脱敏" />
         <el-switch v-model="form.includeCustomWords" active-text="叠加自定义词库" />
@@ -67,7 +77,7 @@
         <code>{{ result.exportPath }}</code>
       </div>
 
-      <div v-if="debugError" class="debug-card">
+      <div v-if="isDev && debugError" class="debug-card">
         <span class="debug-label">调试信息</span>
         <pre>{{ debugError }}</pre>
       </div>
@@ -85,30 +95,73 @@
     </section>
 
     <section class="content-card panel">
-      <SectionHeader title="对比预览" subtitle="左侧原文，右侧脱敏结果。" />
-      <PdfComparePreview
-        v-if="currentFile?.extension === 'pdf'"
-        :source-path="currentFile.path"
-        :source-bytes="currentFile.bytes"
-        :hit-list="result.hitList"
-      />
-      <div v-else class="preview-grid">
-        <div class="preview-panel">
-          <p class="preview-title">原文</p>
-          <pre>{{ result.originalText || '请先上传合同文件并执行脱敏。' }}</pre>
-        </div>
-        <div class="preview-panel">
-          <p class="preview-title">脱敏后</p>
-          <pre>{{ result.maskedText || '脱敏结果会显示在这里。' }}</pre>
+      <SectionHeader title="对比预览" subtitle="左侧原文，右侧脱敏结果。">
+        <template #extra>
+          <el-button plain :disabled="!currentFile && !result.originalText" @click="previewFullscreen = true">
+            全屏预览
+          </el-button>
+        </template>
+      </SectionHeader>
+      <div class="preview-shell">
+        <PdfComparePreview
+          v-if="showPdfVisualPreview"
+          :source-path="currentFile.path"
+          :source-bytes="currentFile.bytes"
+          :hit-list="result.hitList"
+          :page-analyses="currentFile.analysis?.pages || []"
+          :masked-text="result.maskedText"
+          :file-name="currentFile.fileName"
+          :extension="currentFile.extension"
+        />
+        <div v-else class="preview-grid">
+          <div class="preview-panel">
+            <p class="preview-title">原文</p>
+            <pre>{{ result.originalText || '请先上传合同文件并执行脱敏。' }}</pre>
+          </div>
+          <div class="preview-panel">
+            <p class="preview-title">脱敏后</p>
+            <pre>{{ result.maskedText || '脱敏结果会显示在这里。' }}</pre>
+          </div>
         </div>
       </div>
       <el-table :data="result.hitList.slice(0, 20)" height="280" empty-text="暂无命中记录">
+        <el-table-column prop="source" label="来源" width="110">
+          <template #default="{ row }">
+            {{ sourceLabelMap[row.source] || row.source || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="type" label="类别" width="120" />
         <el-table-column prop="original" label="原文" />
         <el-table-column prop="masked" label="脱敏后" />
       </el-table>
     </section>
   </div>
+
+  <el-dialog v-model="previewFullscreen" title="对比预览" fullscreen class="preview-dialog">
+    <div class="preview-dialog-body">
+      <PdfComparePreview
+        v-if="showPdfVisualPreview"
+        :source-path="currentFile?.path"
+        :source-bytes="currentFile?.bytes"
+        :hit-list="result.hitList"
+        :page-analyses="currentFile?.analysis?.pages || []"
+        :masked-text="result.maskedText"
+        :file-name="currentFile?.fileName"
+        :extension="currentFile?.extension"
+        is-fullscreen
+      />
+      <div v-else class="preview-grid fullscreen-grid">
+        <div class="preview-panel fullscreen-panel">
+          <p class="preview-title">原文</p>
+          <pre>{{ result.originalText || '请先上传合同文件并执行脱敏。' }}</pre>
+        </div>
+        <div class="preview-panel fullscreen-panel">
+          <p class="preview-title">脱敏后</p>
+          <pre>{{ result.maskedText || '脱敏结果会显示在这里。' }}</pre>
+        </div>
+      </div>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -120,11 +173,20 @@ import { useHistoryStore } from '../store/history'
 import SectionHeader from '../components/SectionHeader.vue'
 import PdfComparePreview from '../components/PdfComparePreview.vue'
 import { presetTypeOptions, desensitizeText } from '../utils/desensitize'
-import { pickFile, readContractFile, saveMaskedResult } from '../utils/file'
+import { detectPreciseChineseEntities } from '../utils/ner'
+import {
+  applyPdfOcrResult,
+  applyPdfWorkerOcrResult,
+  pickFile,
+  readContractFile,
+  saveMaskedResult
+} from '../utils/file'
+import { runPdfOcr, runPdfOcrWithWorker } from '../utils/ocr'
 import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
 
 const authStore = useAuthStore()
 const historyStore = useHistoryStore()
+const isDev = import.meta.env.DEV
 
 authStore.bootstrap()
 historyStore.bootstrap()
@@ -149,9 +211,15 @@ const result = reactive({
   sourcePath: ''
 })
 const debugError = ref('')
+const previewFullscreen = ref(false)
 let unlistenNativeDragDrop = null
 
 const visibleWords = computed(() => authStore.currentUser?.customWords || [])
+const sourceLabelMap = {
+  external: '外部识别',
+  regex: '规则',
+  custom: '自定义词'
+}
 const modeLabel = computed(() => {
   if (form.enableSmart && form.includeCustomWords) {
     return '智能脱敏 + 自定义词库'
@@ -163,6 +231,50 @@ const modeLabel = computed(() => {
     return '敏感词库'
   }
   return '未选择'
+})
+const showPdfVisualPreview = computed(() => currentFile.value?.extension === 'pdf')
+const pdfAnalysisAlert = computed(() => {
+  const analysis = currentFile.value?.analysis
+  if (!analysis || analysis.type !== 'pdf') {
+    return null
+  }
+  const ocrInfo = currentFile.value?.ocr
+
+  if (ocrInfo?.applied && analysis.kind === 'text') {
+    return {
+      type: 'success',
+      title: '扫描页已完成本地 OCR',
+      description: ocrInfo.pdfEnhanced
+        ? '当前 PDF 已通过本地 OCR 识别文本，并额外补充了 PDF 文字层，后续关键词识别、预览和导出都会基于 OCR 结果继续处理。'
+        : '当前 PDF 已通过本地 OCR 识别文本，后续关键词识别与脱敏将基于 OCR 结果继续处理。'
+    }
+  }
+
+  if (ocrInfo?.applied && analysis.kind !== 'text') {
+    return {
+      type: 'warning',
+      title: 'OCR 已执行，但仍有页面缺少文字层',
+      description: `OCR 后仍有 ${analysis.pagesWithoutText} 页无法提取文字，识别结果可能依然不完整，请检查原扫描质量。`
+    }
+  }
+
+  if (analysis.kind === 'image-only') {
+    return {
+      type: 'warning',
+      title: '当前 PDF 疑似扫描件',
+      description: '该文件几乎没有可读取的文字层。点击“开始脱敏”时，系统会先尝试调用本机 OCRmyPDF 做 OCR，再继续识别。'
+    }
+  }
+
+  if (analysis.kind === 'mixed') {
+    return {
+      type: 'info',
+      title: '当前 PDF 为混合型文档',
+      description: `共 ${analysis.totalPages} 页，其中 ${analysis.pagesWithoutText} 页未检测到文字层。点击“开始脱敏”时，系统会先尝试给这些扫描页补 OCR 文本层。`
+    }
+  }
+
+  return null
 })
 
 async function handlePickFile() {
@@ -187,6 +299,112 @@ async function applySelectedFile(path) {
   result.sourcePath = currentFile.value.path
   debugError.value = ''
   ElMessage.success(`已加载 ${currentFile.value.fileName}`)
+}
+
+async function ensurePdfOcrReady() {
+  if (!currentFile.value || currentFile.value.extension !== 'pdf') {
+    return
+  }
+
+  const analysis = currentFile.value.analysis
+  if (!analysis || analysis.kind === 'text' || currentFile.value.ocr?.applied) {
+    return
+  }
+
+  const originalKind = analysis.kind
+  const missingPageNumbers = (analysis.pages || [])
+    .filter((page) => !page.hasUsableText)
+    .map((page) => page.pageNumber)
+  let workerError = null
+
+  try {
+    const workerResult = await runPdfOcrWithWorker(currentFile.value.bytes || currentFile.value.path, {
+      fileName: currentFile.value.fileName,
+      pageNumbers: missingPageNumbers
+    })
+
+    currentFile.value = applyPdfWorkerOcrResult(currentFile.value, workerResult)
+    result.originalText = currentFile.value.text
+    result.sourcePath = currentFile.value.path
+
+    if (!currentFile.value.text.trim()) {
+      throw new Error('本地 OCR 已执行，但仍未提取到可用文本，请检查扫描件清晰度或 RapidOCR 运行环境。')
+    }
+
+    try {
+      const pdfOcrResult = await runPdfOcr({
+        inputPath: currentFile.value.path,
+        sourceBytes: currentFile.value.bytes,
+        fileName: currentFile.value.fileName
+      })
+      const enhancedFile = await applyPdfOcrResult(currentFile.value, pdfOcrResult)
+      currentFile.value = {
+        ...enhancedFile,
+        ocr: {
+          ...currentFile.value.ocr,
+          applied: true,
+          pdfEnhanced: true,
+          pdfOcrTool: pdfOcrResult.tool || 'ocrmypdf',
+          pdfOcrCommandLabel: pdfOcrResult.commandLabel || '',
+          pdfOcrOutputPath: pdfOcrResult.outputPath || ''
+        }
+      }
+      result.originalText = currentFile.value.text
+      result.sourcePath = currentFile.value.path
+    } catch (enhanceError) {
+      console.warn('pdf text-layer enhancement skipped after local OCR', enhanceError)
+    }
+
+    if (originalKind === 'image-only') {
+      ElMessage.success('本地 OCR 完成，继续执行脱敏。')
+    } else {
+      ElMessage.success('已为扫描页补充本地 OCR 文本，继续执行脱敏。')
+    }
+    return
+  } catch (error) {
+    workerError = error
+    console.warn('local OCR worker failed, fallback to ocrmypdf', error)
+  }
+
+  const ocrResult = await runPdfOcr({
+    inputPath: currentFile.value.path,
+    sourceBytes: currentFile.value.bytes,
+    fileName: currentFile.value.fileName
+  }).catch((error) => {
+    if (workerError?.message) {
+      throw new Error(`RapidOCR worker 失败：${workerError.message}\nOCRmyPDF 回退失败：${error.message || String(error)}`)
+    }
+    throw error
+  })
+
+  currentFile.value = await applyPdfOcrResult(currentFile.value, ocrResult)
+  currentFile.value = {
+    ...currentFile.value,
+    ocr: {
+      ...(currentFile.value.ocr || {}),
+      applied: true,
+      fallback: 'ocrmypdf',
+      fallbackReason: workerError?.message || '',
+      pdfEnhanced: true,
+      pdfOcrTool: ocrResult.tool || 'ocrmypdf',
+      pdfOcrCommandLabel: ocrResult.commandLabel || '',
+      pdfOcrOutputPath: ocrResult.outputPath || ''
+    }
+  }
+  result.originalText = currentFile.value.text
+  result.sourcePath = currentFile.value.path
+
+  if (!currentFile.value.text.trim()) {
+    throw new Error('OCR 已执行，但仍未提取到可用文本，请检查扫描件清晰度或本地 OCR 环境。')
+  }
+
+  if (workerError?.message) {
+    ElMessage.warning(`RapidOCR worker 暂不可用，已回退到 OCRmyPDF：${workerError.message}`)
+  } else if (originalKind === 'image-only') {
+    ElMessage.success('扫描件 OCR 完成，继续执行脱敏。')
+  } else {
+    ElMessage.success('已为扫描页补充 OCR 文本层，继续执行脱敏。')
+  }
 }
 
 function resetDragState() {
@@ -250,11 +468,18 @@ async function handleMask() {
   processing.value = true
   debugError.value = ''
   try {
+    await ensurePdfOcrReady()
+
+    const externalEntities = form.enableSmart
+      ? await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
+      : []
+
     const response = desensitizeText({
       text: currentFile.value.text,
       enableSmart: form.enableSmart,
       enabledTypes: form.enabledTypes,
-      customWords: form.includeCustomWords ? visibleWords.value : []
+      customWords: form.includeCustomWords ? visibleWords.value : [],
+      externalEntities
     })
 
     result.originalText = currentFile.value.text
@@ -281,7 +506,8 @@ async function handleMask() {
           user: authStore.currentUser,
           sourcePath: currentFile.value.path,
           sourceBytes: currentFile.value.bytes,
-          hitList: response.hitList
+          hitList: response.hitList,
+          pageAnalyses: currentFile.value.analysis?.pages || []
         }
       )
       result.exportPath = exported.absolutePath
@@ -313,7 +539,8 @@ async function handleDownload() {
     const output = await saveMaskedResult(currentFile.value.fileName, result.maskedText, {
       sourcePath: currentFile.value.path,
       sourceBytes: currentFile.value.bytes,
-      hitList: result.hitList
+      hitList: result.hitList,
+      pageAnalyses: currentFile.value.analysis?.pages || []
     })
     if (output.saved) {
       debugError.value = ''
@@ -381,6 +608,10 @@ onBeforeUnmount(() => {
   padding: 24px;
 }
 
+.preview-shell {
+  margin-bottom: 18px;
+}
+
 .upload-box {
   padding: 24px;
   border: 1.5px dashed rgba(47, 111, 237, 0.32);
@@ -418,8 +649,76 @@ onBeforeUnmount(() => {
   color: var(--brand-dark);
 }
 
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.preview-panel {
+  min-width: 0;
+  padding: 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.92));
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.preview-panel pre {
+  margin: 0;
+  max-height: 520px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+.preview-dialog-body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.fullscreen-grid {
+  height: 100%;
+  margin-bottom: 0;
+}
+
+.fullscreen-panel {
+  height: 100%;
+}
+
+.fullscreen-panel pre {
+  max-height: calc(100vh - 220px);
+}
+
+:deep(.preview-dialog) {
+  height: 100vh;
+}
+
+:deep(.preview-dialog .el-dialog) {
+  height: 100vh;
+  margin: 0;
+}
+
+:deep(.preview-dialog .el-dialog__body) {
+  height: calc(100vh - 54px);
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+@media (max-width: 1080px) {
+  .preview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .mode-row {
   margin: 18px 0;
+}
+
+.pdf-analysis-alert {
+  margin-top: 14px;
 }
 
 .word-list {
