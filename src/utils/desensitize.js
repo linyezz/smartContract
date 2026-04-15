@@ -537,7 +537,7 @@ function applyExternalEntities(sourceText, entities = [], hitList) {
       }
       chars.splice(item.start, item.end - item.start, item.masked)
       hitList.push({
-        source: 'external',
+        source: item.source || 'external',
         type: item.type,
         original,
         masked: item.masked
@@ -615,8 +615,11 @@ export function desensitizeText({
   const hitList = []
   let maskedText = text
 
-  if (enableSmart) {
+  if (externalEntities.length) {
     maskedText = applyExternalEntities(maskedText, externalEntities, hitList)
+  }
+
+  if (enableSmart) {
     maskedText = applySelectedSmartRules(maskedText, enabledTypes, hitList)
   }
 

@@ -4,7 +4,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { buildMaskedDocument, getExportDescriptor } from './exports'
 import { extractPdfTextWithDiagnostics, uint8ArrayToArrayBuffer } from './pdf'
 
-export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx']
+export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx', 'md']
 export const WORD_LIBRARY_FILE_TYPES = ['docx', 'txt', 'md']
 
 function cloneUint8Array(bytes) {
@@ -126,6 +126,8 @@ export async function readContractFile(fileSource) {
     }
   } else if (extension === 'docx') {
     text = await extractDocxText(cloneUint8Array(bytes))
+  } else if (extension === 'md') {
+    text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
   } else if (extension === 'doc') {
     text = extractLegacyDocText(bytes)
   } else {

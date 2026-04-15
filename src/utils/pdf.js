@@ -126,6 +126,7 @@ function buildFlexiblePattern(value) {
 
 function buildReplacementRules(hitList = []) {
   return [...hitList]
+    .filter((item) => item?.target !== 'pdf-region')
     .filter((item) => item?.original && item?.masked && item.original !== item.masked)
     .sort((a, b) => b.original.length - a.original.length)
     .map((item) => ({
@@ -133,6 +134,12 @@ function buildReplacementRules(hitList = []) {
       pattern: new RegExp(escapeRegExp(item.original), 'g'),
       visualPattern: buildFlexiblePattern(item.original)
     }))
+}
+
+function buildManualRegionRules(hitList = []) {
+  return [...hitList]
+    .filter((item) => item?.target === 'pdf-region')
+    .filter((item) => item?.pageNumber && item?.rect?.width > 0 && item?.rect?.height > 0)
 }
 
 function applyMaskToText(value, replacementRules) {
@@ -663,6 +670,33 @@ function drawMaskedOcrLayer({
   })
 }
 
+function drawManualPdfRegion(context, region, canvasWidth, canvasHeight) {
+  const left = Math.max(Number(region?.rect?.left || 0) * canvasWidth, 0)
+  const top = Math.max(Number(region?.rect?.top || 0) * canvasHeight, 0)
+  const width = Math.min(Number(region?.rect?.width || 0) * canvasWidth, canvasWidth - left)
+  const height = Math.min(Number(region?.rect?.height || 0) * canvasHeight, canvasHeight - top)
+
+  if (width <= 0 || height <= 0) {
+    return
+  }
+
+  const fontSize = Math.max(Math.min(height * 0.62, 30), 12)
+  const stars = region?.masked || '***'
+
+  context.save()
+  context.fillStyle = '#ffffff'
+  context.fillRect(left, top, width, height)
+  context.strokeStyle = 'rgba(15, 23, 42, 0.08)'
+  context.lineWidth = 1
+  context.strokeRect(left, top, width, height)
+  context.font = `${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
+  context.fillStyle = '#111827'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(stars, left + width / 2, top + height / 2, Math.max(width - 8, 12))
+  context.restore()
+}
+
 async function renderPdfPage(page, scale) {
   const viewport = page.getViewport({ scale })
   const canvas = document.createElement('canvas')
@@ -686,6 +720,7 @@ export async function renderPdfPreviewPages(fileSource, hitList = [], options = 
   const scale = options.scale || 1.35
   const { pdf } = await loadPdfDocument(fileSource)
   const replacementRules = buildReplacementRules(hitList)
+  const manualRegionRules = buildManualRegionRules(hitList)
   const pageAnalysisMap = new Map((options.pageAnalyses || []).map((page) => [page.pageNumber, page]))
   const pages = []
 
@@ -722,6 +757,12 @@ export async function renderPdfPreviewPages(fileSource, hitList = [], options = 
         }
       }
     }
+
+    manualRegionRules
+      .filter((item) => item.pageNumber === pageNumber)
+      .forEach((item) => {
+        drawManualPdfRegion(maskedContext, item, maskedCanvas.width, maskedCanvas.height)
+      })
 
     pages.push({
       pageNumber,

@@ -18,7 +18,7 @@
       >
         <strong>{{ currentFile?.fileName || '点击选择合同文件' }}</strong>
         <p>
-          支持 PDF、DOC、DOCX 格式
+          支持 PDF、DOC、DOCX、MD 格式
           <span v-if="currentFile">，当前大小 {{ currentFile.sizeLabel }}</span>
         </p>
         <small>也可以直接把文件拖到这里</small>
@@ -64,7 +64,7 @@
         <el-button type="primary" :loading="processing" @click="handleMask">
           开始脱敏
         </el-button>
-        <el-button :disabled="!result.maskedText" @click="handleDownload">
+        <el-button :disabled="!hasExportableResult" @click="handleDownload">
           另存为
         </el-button>
         <el-button :disabled="!result.exportPath" @click="handleOpenExportPath">
@@ -97,9 +97,14 @@
     <section class="content-card panel">
       <SectionHeader title="对比预览" subtitle="左侧原文，右侧脱敏结果。">
         <template #extra>
-          <el-button plain :disabled="processing || (!currentFile && !result.originalText)" @click="previewFullscreen = true">
-            全屏预览
-          </el-button>
+          <el-space wrap>
+            <el-button plain :disabled="!currentFile || processing" @click="openManualMaskDialog">
+              手动脱敏
+            </el-button>
+            <el-button plain :disabled="processing || (!currentFile && !result.originalText)" @click="previewFullscreen = true">
+              全屏预览
+            </el-button>
+          </el-space>
         </template>
       </SectionHeader>
       <div class="preview-shell">
@@ -172,6 +177,40 @@
       </div>
     </div>
   </el-dialog>
+
+  <el-dialog
+    v-model="manualMaskVisible"
+    :title="manualDialogTitle"
+    width="88%"
+    top="4vh"
+    class="manual-mask-dialog"
+    destroy-on-close
+  >
+    <TextManualMaskEditor
+      v-if="currentFile && currentFile.extension !== 'pdf'"
+      v-model="manualDraftTextSelections"
+      :source-text="result.originalText || currentFile.text"
+    />
+    <PdfManualMaskEditor
+      v-else-if="currentFile"
+      v-model="manualDraftPdfRegions"
+      :source-path="currentFile.path"
+      :source-bytes="currentFile.bytes"
+      :page-analyses="currentFile.analysis?.pages || []"
+    />
+
+    <template #footer>
+      <div class="manual-dialog-footer">
+        <span class="manual-dialog-tip">{{ manualDialogTip }}</span>
+        <div class="manual-dialog-actions">
+          <el-button @click="manualMaskVisible = false">取消</el-button>
+          <el-button type="primary" :loading="processing" @click="handleManualMaskConfirm">
+            完成手动脱敏并输出
+          </el-button>
+        </div>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -182,6 +221,8 @@ import { useAuthStore } from '../store/auth'
 import { useHistoryStore } from '../store/history'
 import SectionHeader from '../components/SectionHeader.vue'
 import PdfComparePreview from '../components/PdfComparePreview.vue'
+import TextManualMaskEditor from '../components/TextManualMaskEditor.vue'
+import PdfManualMaskEditor from '../components/PdfManualMaskEditor.vue'
 import { presetTypeOptions, desensitizeText } from '../utils/desensitize'
 import { detectPreciseChineseEntities } from '../utils/ner'
 import {
@@ -193,6 +234,11 @@ import {
 } from '../utils/file'
 import { runPdfOcr, runPdfOcrWithWorker } from '../utils/ocr'
 import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
+import {
+  buildManualPdfRegionHitList,
+  cloneManualSelections,
+  dedupeManualHitList
+} from '../utils/manualMask'
 
 const authStore = useAuthStore()
 const historyStore = useHistoryStore()
@@ -222,29 +268,46 @@ const result = reactive({
 })
 const debugError = ref('')
 const previewFullscreen = ref(false)
+const manualMaskVisible = ref(false)
 const processingStage = ref('')
+const manualTextSelections = ref([])
+const manualPdfRegions = ref([])
+const manualDraftTextSelections = ref([])
+const manualDraftPdfRegions = ref([])
 let unlistenNativeDragDrop = null
 
 const visibleWords = computed(() => authStore.currentUser?.customWords || [])
 const sourceLabelMap = {
   external: '外部识别',
   regex: '规则',
-  custom: '自定义词'
+  custom: '自定义词',
+  manual: '手动兜底'
 }
 const modeLabel = computed(() => {
-  if (form.enableSmart && form.includeCustomWords) {
-    return '智能脱敏 + 自定义词库'
-  }
+  const modes = []
+
   if (form.enableSmart) {
-    return '智能脱敏'
+    modes.push('智能脱敏')
   }
   if (form.includeCustomWords) {
-    return '敏感词库'
+    modes.push('自定义词库')
   }
-  return '未选择'
+  if (manualTextSelections.value.length || manualPdfRegions.value.length) {
+    modes.push('手动兜底')
+  }
+
+  return modes.length ? modes.join(' + ') : '未选择'
 })
 const showProcessingPreviewState = computed(() => processing.value && Boolean(currentFile.value))
 const showPdfVisualPreview = computed(() => currentFile.value?.extension === 'pdf')
+const hasExportableResult = computed(() => Boolean(result.maskedText || result.hitList.length))
+const manualDialogTitle = computed(() => currentFile.value?.extension === 'pdf' ? '手动区域脱敏' : '手动选词脱敏')
+const manualDialogTip = computed(() => {
+  if (currentFile.value?.extension === 'pdf') {
+    return `当前已选 ${manualDraftPdfRegions.value.length} 个区域，完成后将输出脱敏后的 PDF 文件。`
+  }
+  return `当前已选 ${manualDraftTextSelections.value.length} 段文字，完成后将输出对应格式文件。`
+})
 const previewStageLabel = computed(() => processingStage.value === 'masking' ? '脱敏中' : '识别中')
 const previewStageTitle = computed(() => processingStage.value === 'masking'
   ? '正在生成脱敏结果'
@@ -296,6 +359,42 @@ const pdfAnalysisAlert = computed(() => {
   return null
 })
 
+function resetManualMaskState() {
+  manualTextSelections.value = []
+  manualPdfRegions.value = []
+  manualDraftTextSelections.value = []
+  manualDraftPdfRegions.value = []
+  manualMaskVisible.value = false
+}
+
+function buildManualTextEntities(selections = []) {
+  return selections.map((item) => ({
+    start: item.start,
+    end: item.end,
+    masked: item.masked,
+    type: item.type || '手动选词',
+    source: item.source || 'manual'
+  }))
+}
+
+function buildCombinedHitList(responseHitList = [], manualPdfRegionsToUse = []) {
+  return dedupeManualHitList([
+    ...responseHitList,
+    ...buildManualPdfRegionHitList(manualPdfRegionsToUse)
+  ])
+}
+
+function openManualMaskDialog() {
+  if (!currentFile.value) {
+    ElMessage.warning('请先选择需要处理的合同文件')
+    return
+  }
+
+  manualDraftTextSelections.value = cloneManualSelections(manualTextSelections.value)
+  manualDraftPdfRegions.value = cloneManualSelections(manualPdfRegions.value)
+  manualMaskVisible.value = true
+}
+
 async function handlePickFile() {
   try {
     const path = await pickFile()
@@ -310,6 +409,7 @@ async function handlePickFile() {
 }
 
 async function applySelectedFile(path) {
+  resetManualMaskState()
   currentFile.value = await readContractFile(path)
   result.originalText = currentFile.value.text
   result.maskedText = ''
@@ -474,25 +574,36 @@ async function applyNativeDroppedPath(path) {
   }
 }
 
-async function handleMask() {
+async function executeMaskPipeline(options = {}) {
   if (!currentFile.value) {
     ElMessage.warning('请先选择需要处理的合同文件')
-    return
+    return false
   }
-  if (!form.enableSmart && !form.includeCustomWords) {
-    ElMessage.warning('请至少启用一种脱敏方案')
-    return
+
+  const manualTextSelectionsToUse = cloneManualSelections(options.manualTextSelections || manualTextSelections.value)
+  const manualPdfRegionsToUse = cloneManualSelections(options.manualPdfRegions || manualPdfRegions.value)
+  const hasManualFallback = manualTextSelectionsToUse.length > 0 || manualPdfRegionsToUse.length > 0
+
+  if (!form.enableSmart && !form.includeCustomWords && !hasManualFallback) {
+    ElMessage.warning('请至少启用一种脱敏方案，或添加手动兜底内容')
+    return false
   }
+
+  const requiresTextPipeline = form.enableSmart || form.includeCustomWords || manualTextSelectionsToUse.length > 0
 
   processing.value = true
-  processingStage.value = 'recognizing'
+  processingStage.value = requiresTextPipeline ? 'recognizing' : 'masking'
   debugError.value = ''
   try {
-    await ensurePdfOcrReady()
+    if (currentFile.value.extension === 'pdf' && requiresTextPipeline) {
+      await ensurePdfOcrReady()
+    }
 
-    const externalEntities = form.enableSmart
-      ? await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
-      : []
+    let externalEntities = buildManualTextEntities(manualTextSelectionsToUse)
+    if (form.enableSmart) {
+      const detectedEntities = await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
+      externalEntities = [...detectedEntities, ...externalEntities]
+    }
 
     processingStage.value = 'masking'
     const response = desensitizeText({
@@ -502,10 +613,11 @@ async function handleMask() {
       customWords: form.includeCustomWords ? visibleWords.value : [],
       externalEntities
     })
+    const combinedHitList = buildCombinedHitList(response.hitList, manualPdfRegionsToUse)
 
     result.originalText = currentFile.value.text
     result.maskedText = response.maskedText
-    result.hitList = response.hitList
+    result.hitList = combinedHitList
     result.sourcePath = currentFile.value.path
     const record = historyStore.createRecord({
       fileName: currentFile.value.fileName,
@@ -515,7 +627,7 @@ async function handleMask() {
       sourcePath: currentFile.value.path,
       resultText: response.maskedText,
       originalText: currentFile.value.text,
-      hitList: response.hitList
+      hitList: combinedHitList
     })
 
     try {
@@ -527,7 +639,7 @@ async function handleMask() {
           user: authStore.currentUser,
           sourcePath: currentFile.value.path,
           sourceBytes: currentFile.value.bytes,
-          hitList: response.hitList,
+          hitList: combinedHitList,
           pageAnalyses: currentFile.value.analysis?.pages || []
         }
       )
@@ -538,23 +650,53 @@ async function handleMask() {
         exportRelativePath: exported.relativePath,
         exportFolder: exported.folder
       })
-      ElMessage.success(`脱敏完成，共识别 ${response.hitList.length} 项，结果已按原格式归档`)
+      ElMessage.success(`脱敏完成，共处理 ${combinedHitList.length} 项，结果已按原格式归档`)
     } catch (error) {
       result.exportPath = ''
       debugError.value = String(error?.stack || error?.message || error)
       ElMessage.warning(`脱敏已完成，但导出失败：${error.message || '请稍后重试'}`)
     }
+    return true
   } catch (error) {
     debugError.value = String(error?.stack || error?.message || error)
     ElMessage.error(error.message || '脱敏失败')
+    return false
   } finally {
     processing.value = false
     processingStage.value = ''
   }
 }
 
+async function handleMask() {
+  await executeMaskPipeline({
+    manualTextSelections: manualTextSelections.value,
+    manualPdfRegions: manualPdfRegions.value
+  })
+}
+
+async function handleManualMaskConfirm() {
+  if (!currentFile.value) {
+    return
+  }
+
+  const nextTextSelections = cloneManualSelections(manualDraftTextSelections.value)
+  const nextPdfRegions = cloneManualSelections(manualDraftPdfRegions.value)
+
+  manualTextSelections.value = nextTextSelections
+  manualPdfRegions.value = nextPdfRegions
+
+  const completed = await executeMaskPipeline({
+    manualTextSelections: nextTextSelections,
+    manualPdfRegions: nextPdfRegions
+  })
+
+  if (completed) {
+    manualMaskVisible.value = false
+  }
+}
+
 async function handleDownload() {
-  if (!result.maskedText || !currentFile.value) {
+  if (!hasExportableResult.value || !currentFile.value) {
     return
   }
   try {
@@ -768,6 +910,29 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+:deep(.manual-mask-dialog .el-dialog__body) {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+  padding-top: 12px;
+}
+
+.manual-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manual-dialog-tip {
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.manual-dialog-actions {
+  display: flex;
+  gap: 12px;
+}
+
 @media (max-width: 1080px) {
   .preview-grid {
     grid-template-columns: 1fr;
@@ -916,6 +1081,11 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .action-row {
     flex-direction: column;
+  }
+
+  .manual-dialog-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .action-row .el-button {

@@ -22,7 +22,13 @@ function describeError(stage, error) {
 }
 
 function resolveExportExtension(extension) {
-  return extension === 'pdf' ? 'pdf' : 'docx'
+  if (extension === 'pdf') {
+    return 'pdf'
+  }
+  if (extension === 'md') {
+    return 'md'
+  }
+  return 'docx'
 }
 
 function buildExportName(fileName, extension, stamp = dayjs().format('YYYYMMDD-HHmmss')) {
@@ -156,10 +162,16 @@ async function generatePdfBytes(fileName, maskedText) {
 
 export function getExportDescriptor(fileName, extension) {
   const exportExtension = resolveExportExtension(extension)
+  const filterName = exportExtension === 'pdf'
+    ? 'PDF 文件'
+    : exportExtension === 'md'
+      ? 'Markdown 文件'
+      : 'Word 文档'
+
   return {
     exportExtension,
     defaultFileName: `${sanitizeFileName(fileName).replace(/\.[^.]+$/, '')}-脱敏结果.${exportExtension}`,
-    filterName: exportExtension === 'pdf' ? 'PDF 文件' : 'Word 文档',
+    filterName,
     filters: [exportExtension]
   }
 }
@@ -184,6 +196,8 @@ export async function buildMaskedDocument(fileName, extension, maskedText, optio
     } else {
       bytes = await generatePdfBytes(fileName, maskedText)
     }
+  } else if (exportExtension === 'md') {
+    bytes = toUint8Array(new TextEncoder().encode(maskedText))
   } else {
     bytes = await generateDocxBytes(maskedText)
   }
