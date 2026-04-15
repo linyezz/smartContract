@@ -90,7 +90,7 @@
     </div>
 
     <div v-if="isDev && debugError" class="debug-card">
-      <span class="debug-label">调试信息</span>
+      <span class="debug-label">详细信息</span>
       <pre>{{ debugError }}</pre>
     </div>
   </section>

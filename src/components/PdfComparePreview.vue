@@ -14,7 +14,7 @@
     <div class="pdf-compare">
     <div class="pdf-panel">
       <p class="preview-title">原文页面</p>
-      <div v-if="loading" class="pdf-state">PDF 页面渲染中...</div>
+      <div v-if="loading" class="pdf-state">页面加载中...</div>
       <div v-else-if="error" class="pdf-state error">{{ error }}</div>
       <div v-else class="pdf-pages">
         <div v-for="page in originalPages" :key="`origin-${page.pageNumber}`" class="pdf-page-card">
@@ -30,7 +30,7 @@
 
     <div class="pdf-panel">
       <p class="preview-title">脱敏后页面</p>
-      <div v-if="loading" class="pdf-state">PDF 页面渲染中...</div>
+      <div v-if="loading" class="pdf-state">页面加载中...</div>
       <div v-else-if="error" class="pdf-state error">{{ error }}</div>
       <div v-else class="pdf-pages">
         <div v-for="page in maskedPages" :key="`masked-${page.pageNumber}`" class="pdf-page-card">
@@ -137,7 +137,7 @@ async function loadPreview() {
   } catch (previewError) {
     originalPages.value = []
     maskedPages.value = []
-    error.value = previewError?.message || 'PDF 预览渲染失败'
+    error.value = previewError?.message || '预览加载失败'
   } finally {
     loading.value = false
   }

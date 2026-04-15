@@ -81,7 +81,7 @@
       </div>
 
       <div v-if="isDev && debugError" class="debug-card">
-        <span class="debug-label">调试信息</span>
+        <span class="debug-label">详细信息</span>
         <pre>{{ debugError }}</pre>
       </div>
 
@@ -301,7 +301,7 @@ const modeLabel = computed(() => {
     modes.push('自定义词库')
   }
   if (manualTextSelections.value.length || manualPdfRegions.value.length) {
-    modes.push('手动兜底')
+    modes.push('手动脱敏')
   }
 
   return modes.length ? modes.join(' + ') : '未选择'
@@ -314,17 +314,17 @@ const manualSourceText = computed(() => autoResult.maskedText || currentFile.val
 const manualDialogTitle = computed(() => currentFile.value?.extension === 'pdf' ? '手动区域脱敏' : '手动选词脱敏')
 const manualDialogTip = computed(() => {
   if (currentFile.value?.extension === 'pdf') {
-    return `当前已选 ${manualDraftPdfRegions.value.length} 个区域，完成后将输出脱敏后的 PDF 文件。`
+    return `当前已选 ${manualDraftPdfRegions.value.length} 个区域，完成后将输出最终文件。`
   }
-  return `当前已选 ${manualDraftTextSelections.value.length} 段文字，完成后将输出对应格式文件。`
+  return `当前已选 ${manualDraftTextSelections.value.length} 段文字，完成后将输出最终文件。`
 })
 const previewStageLabel = computed(() => processingStage.value === 'masking' ? '脱敏中' : '识别中')
 const previewStageTitle = computed(() => processingStage.value === 'masking'
   ? '正在生成脱敏结果'
-  : '正在识别合同内容')
+  : '正在识别文档内容')
 const previewStageDescription = computed(() => processingStage.value === 'masking'
-  ? '敏感信息正在匹配并替换，完成后会再统一渲染 PDF 预览。'
-  : '系统正在执行 OCR 与实体识别，处理中暂不渲染预览，避免页面频繁闪动。')
+  ? '正在处理敏感信息，请稍候。'
+  : '扫描件识别通常会稍慢一些，请耐心等待。')
 const pdfAnalysisAlert = computed(() => {
   const analysis = currentFile.value?.analysis
   if (!analysis || analysis.type !== 'pdf') {
@@ -335,34 +335,34 @@ const pdfAnalysisAlert = computed(() => {
   if (ocrInfo?.applied && analysis.kind === 'text') {
     return {
       type: 'success',
-      title: '扫描页已完成本地 OCR',
+      title: '扫描页已完成识别',
       description: ocrInfo.pdfEnhanced
-        ? '当前 PDF 已通过本地 OCR 识别文本，并额外补充了 PDF 文字层，后续关键词识别、预览和导出都会基于 OCR 结果继续处理。'
-        : '当前 PDF 已通过本地 OCR 识别文本，后续关键词识别与脱敏将基于 OCR 结果继续处理。'
+        ? '当前文件已完成扫描内容识别，后续预览和导出会基于识别结果继续处理。'
+        : '当前文件已完成扫描内容识别，后续会继续进行脱敏处理。'
     }
   }
 
   if (ocrInfo?.applied && analysis.kind !== 'text') {
     return {
       type: 'warning',
-      title: 'OCR 已执行，但仍有页面缺少文字层',
-      description: `OCR 后仍有 ${analysis.pagesWithoutText} 页无法提取文字，识别结果可能依然不完整，请检查原扫描质量。`
+      title: '部分页面识别仍不完整',
+      description: `仍有 ${analysis.pagesWithoutText} 页内容较难识别，建议在结果页再做人工检查。`
     }
   }
 
   if (analysis.kind === 'image-only') {
     return {
       type: 'warning',
-      title: '当前 PDF 疑似扫描件',
-      description: '该文件几乎没有可读取的文字层。点击“开始脱敏”时，系统会先尝试调用本机 OCRmyPDF 做 OCR，再继续识别。'
+      title: '当前文件为扫描件',
+      description: '扫描件处理时间会比普通文档更久一些，请耐心等待。'
     }
   }
 
   if (analysis.kind === 'mixed') {
     return {
       type: 'info',
-      title: '当前 PDF 为混合型文档',
-      description: `共 ${analysis.totalPages} 页，其中 ${analysis.pagesWithoutText} 页未检测到文字层。点击“开始脱敏”时，系统会先尝试给这些扫描页补 OCR 文本层。`
+      title: '当前文件部分页面为扫描件',
+      description: `共 ${analysis.totalPages} 页，其中 ${analysis.pagesWithoutText} 页识别时间可能会更久。`
     }
   }
 
@@ -514,7 +514,7 @@ async function ensureAutoPreviewReady(showMessage = false) {
       ElMessage.success(
         hasAutomaticStrategy
           ? `自动脱敏完成，共处理 ${response.hitList.length} 项，可继续手动补充。`
-          : '已准备手动脱敏基线，可继续人工补充。'
+          : '已准备好手动脱敏内容，可继续补充。'
       )
     }
 
@@ -597,7 +597,7 @@ async function ensurePdfOcrReady() {
     result.sourcePath = currentFile.value.path
 
     if (!currentFile.value.text.trim()) {
-      throw new Error('本地 OCR 已执行，但仍未提取到可用文本，请检查扫描件清晰度或 RapidOCR 运行环境。')
+      throw new Error('当前文件已完成识别，但仍未提取到可用内容，请检查扫描件是否清晰。')
     }
 
     try {
@@ -625,9 +625,9 @@ async function ensurePdfOcrReady() {
     }
 
     if (originalKind === 'image-only') {
-      ElMessage.success('本地 OCR 完成，继续执行脱敏。')
+      ElMessage.success('扫描件识别完成，继续执行脱敏。')
     } else {
-      ElMessage.success('已为扫描页补充本地 OCR 文本，继续执行脱敏。')
+      ElMessage.success('扫描页识别完成，继续执行脱敏。')
     }
     return
   } catch (error) {
@@ -641,7 +641,7 @@ async function ensurePdfOcrReady() {
     fileName: currentFile.value.fileName
   }).catch((error) => {
     if (workerError?.message) {
-      throw new Error(`RapidOCR worker 失败：${workerError.message}\nOCRmyPDF 回退失败：${error.message || String(error)}`)
+      throw new Error(`当前文件识别失败，请稍后重试。\n${error.message || String(error)}`)
     }
     throw error
   })
@@ -664,15 +664,15 @@ async function ensurePdfOcrReady() {
   result.sourcePath = currentFile.value.path
 
   if (!currentFile.value.text.trim()) {
-    throw new Error('OCR 已执行，但仍未提取到可用文本，请检查扫描件清晰度或本地 OCR 环境。')
+    throw new Error('当前文件已完成识别，但仍未提取到可用内容，请检查扫描件是否清晰。')
   }
 
   if (workerError?.message) {
-    ElMessage.warning(`RapidOCR worker 暂不可用，已回退到 OCRmyPDF：${workerError.message}`)
+    ElMessage.warning('扫描件识别时间较长，系统已切换到备用识别方式，请稍候。')
   } else if (originalKind === 'image-only') {
-    ElMessage.success('扫描件 OCR 完成，继续执行脱敏。')
+    ElMessage.success('扫描件识别完成，继续执行脱敏。')
   } else {
-    ElMessage.success('已为扫描页补充 OCR 文本层，继续执行脱敏。')
+    ElMessage.success('扫描页识别完成，继续执行脱敏。')
   }
 }
 
@@ -774,7 +774,7 @@ async function handleManualMaskConfirm() {
     result.exportPath = exported.absolutePath
     recordTaskResult(finalResult.maskedText, finalResult.hitList, exported)
     manualMaskVisible.value = false
-    ElMessage.success(`手动兜底已完成，共处理 ${finalResult.hitList.length} 项，最终文件已输出。`)
+    ElMessage.success(`手动脱敏已完成，共处理 ${finalResult.hitList.length} 项，最终文件已输出。`)
   } catch (error) {
     result.exportPath = ''
     debugError.value = String(error?.stack || error?.message || error)

@@ -17,7 +17,7 @@
       </div>
     </div>
 
-    <div v-if="loading" class="pdf-state">PDF 页面渲染中...</div>
+    <div v-if="loading" class="pdf-state">页面加载中...</div>
     <div v-else-if="error" class="pdf-state error">{{ error }}</div>
     <div v-else class="pdf-pages">
       <div v-for="page in pages" :key="page.pageNumber" class="pdf-page-card">
@@ -188,7 +188,7 @@ async function loadPages() {
     })
   } catch (loadError) {
     pages.value = []
-    error.value = loadError?.message || 'PDF 页面加载失败'
+    error.value = loadError?.message || '页面加载失败'
   } finally {
     loading.value = false
   }

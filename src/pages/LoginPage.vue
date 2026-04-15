@@ -39,15 +39,7 @@
 
       <template v-if="activeTab === 'wecom'">
         <h2>企业微信登录</h2>
-        <!-- <p class="section-subtitle">
-          点击后会拉起企微扫码授权，登录成功后会自动写入本地成员信息。
-        </p> -->
-        <!-- <div class="tips-card">
-          <p class="tips-title">授权说明</p>
-          <p>
-            请使用已开通权限的企业微信账号扫码登录。首次登录会自动在本地创建成员，并保存姓名、用户标识与头像信息。
-          </p>
-        </div> -->
+        <p class="section-subtitle">点击后会打开扫码页面，完成授权后将自动进入系统。</p>
         <el-button
           type="primary"
           size="large"
@@ -86,7 +78,7 @@
       </template>
 
       <div v-if="isDev && debugMessage" class="debug-card">
-        <p class="debug-title">调试信息</p>
+        <p class="debug-title">详细信息</p>
         <pre>{{ debugMessage }}</pre>
       </div>
     </div>
@@ -164,9 +156,9 @@ async function handleWecomLogin() {
   try {
     await openWecomLoginWindow()
     loginPopup = { opened: true }
-    ElMessage.success('企业微信登录窗口已打开，请在新窗口中完成扫码。')
+    ElMessage.success('扫码页面已打开，请在新窗口中完成登录。')
   } catch (error) {
-    const message = error?.message || '未能拉起企微登录窗口，请检查桌面端窗口权限配置。'
+    const message = error?.message || '暂时无法打开扫码页面，请稍后重试。'
     debugMessage.value = String(message)
     ElMessage.error(String(message))
   }

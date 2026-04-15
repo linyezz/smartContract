@@ -9,15 +9,29 @@ function safeStringify(value) {
   }
 }
 
-function extractInvokeErrorMessage(error, label) {
+function normalizeUserFacingError(message, fallback) {
+  const text = String(message || '').trim()
+  if (!text) {
+    return fallback
+  }
+
+  return text
+    .replace(/\[(OCRmyPDF|RapidOCR worker)\]\s*/g, '')
+    .replace(/OCRmyPDF/g, '扫描件识别')
+    .replace(/RapidOCR worker/g, '扫描件识别')
+    .replace(/worker/gi, '识别服务')
+    .replace(/ocrmypdf/gi, '扫描件识别')
+}
+
+function extractInvokeErrorMessage(error, label, fallbackMessage) {
   if (error instanceof Error) {
     const message = error.message?.trim()
-    return message ? `[${label}] ${message}` : `[${label}] ${error.name || 'Error'}`
+    return normalizeUserFacingError(message || error.name || 'Error', fallbackMessage)
   }
 
   if (typeof error === 'string') {
     const message = error.trim()
-    return message ? `[${label}] ${message}` : `[${label}] 未知错误`
+    return normalizeUserFacingError(message || '未知错误', fallbackMessage)
   }
 
   if (error && typeof error === 'object') {
@@ -31,17 +45,17 @@ function extractInvokeErrorMessage(error, label) {
       .filter(Boolean)
 
     if (candidates.length) {
-      return `[${label}] ${candidates.join(' | ')}`
+      return normalizeUserFacingError(candidates.join(' | '), fallbackMessage)
     }
 
     const serialized = safeStringify(error)
     if (serialized) {
-      return `[${label}] ${serialized}`
+      return normalizeUserFacingError(serialized, fallbackMessage)
     }
   }
 
-  const fallback = String(error ?? '').trim()
-  return `[${label}] ${fallback || '未知错误'}`
+  const rawMessage = String(error ?? '').trim()
+  return normalizeUserFacingError(rawMessage || '未知错误', fallbackMessage)
 }
 
 export async function runPdfOcr(options = {}) {
@@ -55,7 +69,7 @@ export async function runPdfOcr(options = {}) {
   try {
     return await invoke('ocr_pdf_document', { payload })
   } catch (error) {
-    throw new Error(extractInvokeErrorMessage(error, 'OCRmyPDF'))
+    throw new Error(extractInvokeErrorMessage(error, 'OCRmyPDF', '扫描件识别失败，请稍后重试。'))
   }
 }
 
@@ -68,7 +82,7 @@ export async function runLocalOcrWorker(options = {}) {
   try {
     return await invoke('ocr_pages_with_worker', { payload })
   } catch (error) {
-    throw new Error(extractInvokeErrorMessage(error, 'RapidOCR worker'))
+    throw new Error(extractInvokeErrorMessage(error, 'RapidOCR worker', '扫描件识别失败，请稍后重试。'))
   }
 }
 
