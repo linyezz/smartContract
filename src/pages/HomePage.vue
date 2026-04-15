@@ -70,6 +70,9 @@
         <el-button :disabled="!result.exportPath" @click="handleOpenExportPath">
           打开归档
         </el-button>
+        <el-button :disabled="processing || !hasTaskState" @click="resetTaskState">
+          清空任务
+        </el-button>
       </div>
 
       <div v-if="result.exportPath" class="path-card">
@@ -189,13 +192,14 @@
     <TextManualMaskEditor
       v-if="currentFile && currentFile.extension !== 'pdf'"
       v-model="manualDraftTextSelections"
-      :source-text="result.originalText || currentFile.text"
+      :source-text="manualSourceText"
     />
     <PdfManualMaskEditor
       v-else-if="currentFile"
       v-model="manualDraftPdfRegions"
       :source-path="currentFile.path"
       :source-bytes="currentFile.bytes"
+      :hit-list="autoResult.hitList"
       :page-analyses="currentFile.analysis?.pages || []"
     />
 
@@ -266,6 +270,10 @@ const result = reactive({
   exportPath: '',
   sourcePath: ''
 })
+const autoResult = reactive({
+  maskedText: '',
+  hitList: []
+})
 const debugError = ref('')
 const previewFullscreen = ref(false)
 const manualMaskVisible = ref(false)
@@ -301,6 +309,8 @@ const modeLabel = computed(() => {
 const showProcessingPreviewState = computed(() => processing.value && Boolean(currentFile.value))
 const showPdfVisualPreview = computed(() => currentFile.value?.extension === 'pdf')
 const hasExportableResult = computed(() => Boolean(result.maskedText || result.hitList.length))
+const hasTaskState = computed(() => Boolean(currentFile.value || result.maskedText || result.hitList.length || result.exportPath))
+const manualSourceText = computed(() => autoResult.maskedText || currentFile.value?.text || '')
 const manualDialogTitle = computed(() => currentFile.value?.extension === 'pdf' ? '手动区域脱敏' : '手动选词脱敏')
 const manualDialogTip = computed(() => {
   if (currentFile.value?.extension === 'pdf') {
@@ -367,6 +377,45 @@ function resetManualMaskState() {
   manualMaskVisible.value = false
 }
 
+function resetAutoResultState() {
+  autoResult.maskedText = ''
+  autoResult.hitList = []
+}
+
+function resetResultState() {
+  result.originalText = ''
+  result.maskedText = ''
+  result.hitList = []
+  result.exportPath = ''
+  result.sourcePath = ''
+}
+
+function applyPreviewResult(maskedText, hitList, options = {}) {
+  result.originalText = currentFile.value?.text || ''
+  result.maskedText = maskedText
+  result.hitList = hitList
+  result.sourcePath = currentFile.value?.path || ''
+
+  if (!options.keepExportPath) {
+    result.exportPath = ''
+  }
+}
+
+function resetTaskState() {
+  resetDragState()
+  resetManualMaskState()
+  resetAutoResultState()
+  resetResultState()
+  form.enableSmart = true
+  form.includeCustomWords = true
+  form.enabledTypes = presetTypeOptions.map((item) => item.value)
+  currentFile.value = null
+  processing.value = false
+  debugError.value = ''
+  previewFullscreen.value = false
+  processingStage.value = ''
+}
+
 function buildManualTextEntities(selections = []) {
   return selections.map((item) => ({
     start: item.start,
@@ -384,10 +433,113 @@ function buildCombinedHitList(responseHitList = [], manualPdfRegionsToUse = []) 
   ])
 }
 
-function openManualMaskDialog() {
+function buildFinalManualResult(manualTextSelectionsToUse = [], manualPdfRegionsToUse = []) {
+  const baseText = autoResult.maskedText || currentFile.value?.text || ''
+  const manualResponse = desensitizeText({
+    text: baseText,
+    enableSmart: false,
+    enabledTypes: [],
+    customWords: [],
+    externalEntities: buildManualTextEntities(manualTextSelectionsToUse)
+  })
+
+  return {
+    maskedText: manualResponse.maskedText,
+    hitList: buildCombinedHitList([
+      ...autoResult.hitList,
+      ...manualResponse.hitList
+    ], manualPdfRegionsToUse)
+  }
+}
+
+function recordTaskResult(maskedText, hitList, exportMeta = {}) {
+  if (!currentFile.value) {
+    return
+  }
+
+  historyStore.createRecord({
+    fileName: currentFile.value.fileName,
+    extension: currentFile.value.extension,
+    fileSize: currentFile.value.sizeLabel,
+    mode: modeLabel.value,
+    sourcePath: currentFile.value.path,
+    resultText: maskedText,
+    originalText: currentFile.value.text,
+    hitList,
+    exportExtension: exportMeta.exportExtension || '',
+    exportPath: exportMeta.absolutePath || exportMeta.path || '',
+    exportRelativePath: exportMeta.relativePath || '',
+    exportFolder: exportMeta.folder || ''
+  })
+}
+
+async function ensureAutoPreviewReady(showMessage = false) {
+  if (!currentFile.value) {
+    ElMessage.warning('请先选择需要处理的合同文件')
+    return false
+  }
+
+  const hasAutomaticStrategy = form.enableSmart || form.includeCustomWords
+
+  processing.value = true
+  processingStage.value = hasAutomaticStrategy ? 'recognizing' : 'masking'
+  debugError.value = ''
+
+  try {
+    if (currentFile.value.extension === 'pdf' && hasAutomaticStrategy) {
+      await ensurePdfOcrReady()
+    }
+
+    let externalEntities = []
+    if (form.enableSmart) {
+      externalEntities = await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
+    }
+
+    processingStage.value = 'masking'
+    const response = desensitizeText({
+      text: currentFile.value.text,
+      enableSmart: form.enableSmart,
+      enabledTypes: form.enabledTypes,
+      customWords: form.includeCustomWords ? visibleWords.value : [],
+      externalEntities
+    })
+
+    autoResult.maskedText = response.maskedText
+    autoResult.hitList = response.hitList
+    applyPreviewResult(response.maskedText, response.hitList)
+    manualTextSelections.value = []
+    manualPdfRegions.value = []
+
+    if (showMessage) {
+      ElMessage.success(
+        hasAutomaticStrategy
+          ? `自动脱敏完成，共处理 ${response.hitList.length} 项，可继续手动补充。`
+          : '已准备手动脱敏基线，可继续人工补充。'
+      )
+    }
+
+    return true
+  } catch (error) {
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(error.message || '脱敏失败')
+    return false
+  } finally {
+    processing.value = false
+    processingStage.value = ''
+  }
+}
+
+async function openManualMaskDialog() {
   if (!currentFile.value) {
     ElMessage.warning('请先选择需要处理的合同文件')
     return
+  }
+
+  if (!autoResult.maskedText && !autoResult.hitList.length) {
+    const prepared = await ensureAutoPreviewReady(false)
+    if (!prepared) {
+      return
+    }
   }
 
   manualDraftTextSelections.value = cloneManualSelections(manualTextSelections.value)
@@ -410,12 +562,10 @@ async function handlePickFile() {
 
 async function applySelectedFile(path) {
   resetManualMaskState()
+  resetAutoResultState()
   currentFile.value = await readContractFile(path)
+  applyPreviewResult('', [], { keepExportPath: false })
   result.originalText = currentFile.value.text
-  result.maskedText = ''
-  result.hitList = []
-  result.exportPath = ''
-  result.sourcePath = currentFile.value.path
   debugError.value = ''
   ElMessage.success(`已加载 ${currentFile.value.fileName}`)
 }
@@ -574,104 +724,14 @@ async function applyNativeDroppedPath(path) {
   }
 }
 
-async function executeMaskPipeline(options = {}) {
-  if (!currentFile.value) {
-    ElMessage.warning('请先选择需要处理的合同文件')
-    return false
-  }
-
-  const manualTextSelectionsToUse = cloneManualSelections(options.manualTextSelections || manualTextSelections.value)
-  const manualPdfRegionsToUse = cloneManualSelections(options.manualPdfRegions || manualPdfRegions.value)
-  const hasManualFallback = manualTextSelectionsToUse.length > 0 || manualPdfRegionsToUse.length > 0
-
-  if (!form.enableSmart && !form.includeCustomWords && !hasManualFallback) {
-    ElMessage.warning('请至少启用一种脱敏方案，或添加手动兜底内容')
-    return false
-  }
-
-  const requiresTextPipeline = form.enableSmart || form.includeCustomWords || manualTextSelectionsToUse.length > 0
-
-  processing.value = true
-  processingStage.value = requiresTextPipeline ? 'recognizing' : 'masking'
-  debugError.value = ''
-  try {
-    if (currentFile.value.extension === 'pdf' && requiresTextPipeline) {
-      await ensurePdfOcrReady()
-    }
-
-    let externalEntities = buildManualTextEntities(manualTextSelectionsToUse)
-    if (form.enableSmart) {
-      const detectedEntities = await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
-      externalEntities = [...detectedEntities, ...externalEntities]
-    }
-
-    processingStage.value = 'masking'
-    const response = desensitizeText({
-      text: currentFile.value.text,
-      enableSmart: form.enableSmart,
-      enabledTypes: form.enabledTypes,
-      customWords: form.includeCustomWords ? visibleWords.value : [],
-      externalEntities
-    })
-    const combinedHitList = buildCombinedHitList(response.hitList, manualPdfRegionsToUse)
-
-    result.originalText = currentFile.value.text
-    result.maskedText = response.maskedText
-    result.hitList = combinedHitList
-    result.sourcePath = currentFile.value.path
-    const record = historyStore.createRecord({
-      fileName: currentFile.value.fileName,
-      extension: currentFile.value.extension,
-      fileSize: currentFile.value.sizeLabel,
-      mode: modeLabel.value,
-      sourcePath: currentFile.value.path,
-      resultText: response.maskedText,
-      originalText: currentFile.value.text,
-      hitList: combinedHitList
-    })
-
-    try {
-      const exported = await exportMaskedResultToArchive(
-        currentFile.value.fileName,
-        currentFile.value.extension,
-        response.maskedText,
-        {
-          user: authStore.currentUser,
-          sourcePath: currentFile.value.path,
-          sourceBytes: currentFile.value.bytes,
-          hitList: combinedHitList,
-          pageAnalyses: currentFile.value.analysis?.pages || []
-        }
-      )
-      result.exportPath = exported.absolutePath
-      historyStore.updateRecord(record.id, {
-        exportExtension: exported.exportExtension,
-        exportPath: exported.absolutePath,
-        exportRelativePath: exported.relativePath,
-        exportFolder: exported.folder
-      })
-      ElMessage.success(`脱敏完成，共处理 ${combinedHitList.length} 项，结果已按原格式归档`)
-    } catch (error) {
-      result.exportPath = ''
-      debugError.value = String(error?.stack || error?.message || error)
-      ElMessage.warning(`脱敏已完成，但导出失败：${error.message || '请稍后重试'}`)
-    }
-    return true
-  } catch (error) {
-    debugError.value = String(error?.stack || error?.message || error)
-    ElMessage.error(error.message || '脱敏失败')
-    return false
-  } finally {
-    processing.value = false
-    processingStage.value = ''
-  }
-}
-
 async function handleMask() {
-  await executeMaskPipeline({
-    manualTextSelections: manualTextSelections.value,
-    manualPdfRegions: manualPdfRegions.value
-  })
+  if (!form.enableSmart && !form.includeCustomWords) {
+    ElMessage.warning('请至少启用一种自动脱敏方案')
+    return
+  }
+
+  resetManualMaskState()
+  await ensureAutoPreviewReady(true)
 }
 
 async function handleManualMaskConfirm() {
@@ -679,19 +739,49 @@ async function handleManualMaskConfirm() {
     return
   }
 
+  if (!autoResult.maskedText && !autoResult.hitList.length) {
+    const prepared = await ensureAutoPreviewReady(false)
+    if (!prepared) {
+      return
+    }
+  }
+
   const nextTextSelections = cloneManualSelections(manualDraftTextSelections.value)
   const nextPdfRegions = cloneManualSelections(manualDraftPdfRegions.value)
+  const finalResult = buildFinalManualResult(nextTextSelections, nextPdfRegions)
 
   manualTextSelections.value = nextTextSelections
   manualPdfRegions.value = nextPdfRegions
+  applyPreviewResult(finalResult.maskedText, finalResult.hitList)
 
-  const completed = await executeMaskPipeline({
-    manualTextSelections: nextTextSelections,
-    manualPdfRegions: nextPdfRegions
-  })
+  processing.value = true
+  processingStage.value = 'masking'
+  debugError.value = ''
 
-  if (completed) {
+  try {
+    const exported = await exportMaskedResultToArchive(
+      currentFile.value.fileName,
+      currentFile.value.extension,
+      finalResult.maskedText,
+      {
+        user: authStore.currentUser,
+        sourcePath: currentFile.value.path,
+        sourceBytes: currentFile.value.bytes,
+        hitList: finalResult.hitList,
+        pageAnalyses: currentFile.value.analysis?.pages || []
+      }
+    )
+    result.exportPath = exported.absolutePath
+    recordTaskResult(finalResult.maskedText, finalResult.hitList, exported)
     manualMaskVisible.value = false
+    ElMessage.success(`手动兜底已完成，共处理 ${finalResult.hitList.length} 项，最终文件已输出。`)
+  } catch (error) {
+    result.exportPath = ''
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(`输出失败：${error.message || '请稍后重试'}`)
+  } finally {
+    processing.value = false
+    processingStage.value = ''
   }
 }
 
@@ -709,6 +799,7 @@ async function handleDownload() {
     if (output.saved) {
       debugError.value = ''
       result.exportPath = output.path
+      recordTaskResult(result.maskedText, result.hitList, output)
       ElMessage.success(`脱敏结果已另存为 ${output.exportExtension?.toUpperCase() || '文件'}`)
     }
   } catch (error) {

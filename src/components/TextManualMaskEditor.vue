@@ -1,7 +1,7 @@
 <template>
   <div class="manual-text-editor">
     <div class="manual-text-tip">
-      在左侧原文里直接框选需要兜底脱敏的文字，然后点击“加入脱敏”。
+      在左侧当前自动脱敏后的文本里直接框选需要兜底脱敏的文字，然后点击“加入脱敏”。
     </div>
 
     <div class="manual-text-actions">

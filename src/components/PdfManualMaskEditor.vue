@@ -1,7 +1,7 @@
 <template>
   <div class="manual-pdf-editor">
     <div class="manual-pdf-tip">
-      在原文页面上按住鼠标拖出一个区域，即可把该区域作为人工兜底脱敏范围导出。
+      在当前自动脱敏后的页面上按住鼠标拖出一个区域，即可把该区域作为人工兜底脱敏范围导出。
     </div>
 
     <div class="pdf-toolbar">
@@ -28,7 +28,7 @@
           @mousedown.left="startSelection(page.pageNumber, $event)"
         >
           <img
-            :src="page.originalDataUrl"
+            :src="page.maskedDataUrl"
             :alt="`PDF 第 ${page.pageNumber} 页`"
             class="pdf-page-image"
             draggable="false"
@@ -94,6 +94,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  hitList: {
+    type: Array,
+    default: () => []
+  },
   modelValue: {
     type: Array,
     default: () => []
@@ -124,7 +128,7 @@ watch(
 )
 
 watch(
-  () => [props.sourcePath, props.sourceBytes, props.pageAnalyses],
+  () => [props.sourcePath, props.sourceBytes, props.pageAnalyses, props.hitList],
   () => {
     draftRegion.value = null
     void loadPages()
@@ -179,7 +183,7 @@ async function loadPages() {
   error.value = ''
 
   try {
-    pages.value = await renderPdfPreviewPages(sourceRef.value, [], {
+    pages.value = await renderPdfPreviewPages(sourceRef.value, props.hitList, {
       pageAnalyses: props.pageAnalyses
     })
   } catch (loadError) {
