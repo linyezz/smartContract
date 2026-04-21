@@ -3,7 +3,6 @@
     <header class="content-card topbar">
       <div>
         <p class="topbar-brand">极易合同智能脱敏</p>
-        <p class="topbar-subtitle">本地化处理合同内容，敏感信息不出端</p>
       </div>
       <div class="topbar-actions">
         <RouterLink to="/" class="nav-link" :class="{ active: route.name === 'home' }">首页</RouterLink>
@@ -17,7 +16,6 @@
             {{ userInitial }}
           </div>
           <span>{{ authStore.currentUser?.name }}</span>
-          <small>{{ authStore.currentUser?.title }}</small>
         </div>
       </div>
     </header>
@@ -60,11 +58,6 @@ const userInitial = computed(() => authStore.currentUser?.name?.slice(0, 1) || '
   letter-spacing: 0.02em;
 }
 
-.topbar-subtitle {
-  margin: 8px 0 0;
-  color: var(--text-secondary);
-}
-
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -96,14 +89,9 @@ const userInitial = computed(() => authStore.currentUser?.name?.slice(0, 1) || '
   align-items: center;
 }
 
-.user-chip span,
-.user-chip small {
+.user-chip span {
   display: block;
-}
-
-.user-chip small {
-  margin-top: 4px;
-  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .user-avatar-wrap,

@@ -6,12 +6,14 @@
           <img :src="authStore.currentUser.avatar" :alt="authStore.currentUser.name" class="avatar-image" />
         </div>
         <div v-else class="avatar-circle">{{ initial }}</div>
-        <h3>{{ authStore.currentUser?.name }}</h3>
-        <p>{{ authStore.currentUser?.title }}</p>
+        <el-button link type="primary" class="avatar-edit-button" @click="changeAvatar">
+          修改头像
+        </el-button>
       </div>
       <el-menu :default-active="activeTab" @select="activeTab = $event">
         <el-menu-item index="profile">个人信息</el-menu-item>
         <el-menu-item index="words">脱敏词库</el-menu-item>
+        <el-menu-item index="about">关于</el-menu-item>
         <el-menu-item v-if="authStore.isAdmin" index="members">成员管理</el-menu-item>
       </el-menu>
       <el-button plain class="logout-button" @click="handleLogout">退出登录</el-button>
@@ -19,7 +21,7 @@
 
     <section class="content-card panel">
       <template v-if="activeTab === 'profile'">
-        <SectionHeader title="个人信息" subtitle="修改头像文字、姓名、职位、邮箱和手机号。" />
+        <SectionHeader title="个人信息" subtitle="修改姓名、职位、邮箱和手机号。" />
         <el-form label-position="top" :model="profileForm" class="form-grid">
           <el-form-item label="姓名"><el-input v-model="profileForm.name" /></el-form-item>
           <el-form-item label="职位"><el-input v-model="profileForm.title" /></el-form-item>
@@ -69,6 +71,16 @@
               </div>
             </div>
           </div>
+        </div>
+      </template>
+
+      <template v-else-if="activeTab === 'about'">
+        <SectionHeader title="关于" subtitle="产品信息与适用说明。" />
+        <div class="about-card">
+          <h2>极易合同智能脱敏系统</h2>
+          <p><strong>版本：</strong>1.0.0</p>
+          <p><strong>用途：</strong>用于合同等文档的敏感信息脱敏处理</p>
+          <p>适用于法务场景的文档处理工具</p>
         </div>
       </template>
 
@@ -134,6 +146,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
+import { readFile } from '@tauri-apps/plugin-fs'
 import SectionHeader from '../components/SectionHeader.vue'
 import { useAuthStore } from '../store/auth'
 import { uid } from '../utils/storage'
@@ -150,6 +163,7 @@ const wordInput = ref('')
 
 const profileForm = reactive({
   id: '',
+  avatar: '',
   name: '',
   title: '',
   email: '',
@@ -176,6 +190,7 @@ watch(
       return
     }
     profileForm.id = user.id
+    profileForm.avatar = user.avatar || ''
     profileForm.name = user.name
     profileForm.title = user.title
     profileForm.email = user.email
@@ -187,6 +202,61 @@ watch(
 function saveProfile() {
   authStore.updateProfile({ ...profileForm })
   ElMessage.success('个人信息已保存')
+}
+
+async function changeAvatar() {
+  try {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: '头像图片',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif']
+        }
+      ]
+    })
+
+    const path = typeof selected === 'string' ? selected : null
+    if (!path) {
+      return
+    }
+
+    const bytes = await readFile(path)
+    profileForm.avatar = buildAvatarDataUrl(path, bytes)
+    saveProfile()
+  } catch (error) {
+    ElMessage.error(error.message || '修改头像失败')
+  }
+}
+
+function buildAvatarDataUrl(path, bytes) {
+  const mimeType = resolveImageMimeType(path)
+  let binary = ''
+  const chunkSize = 0x8000
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return `data:${mimeType};base64,${btoa(binary)}`
+}
+
+function resolveImageMimeType(path) {
+  const extension = path.split('.').pop()?.toLowerCase()
+
+  switch (extension) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'webp':
+      return 'image/webp'
+    case 'gif':
+      return 'image/gif'
+    default:
+      return 'image/png'
+  }
 }
 
 function addWord() {
@@ -326,6 +396,10 @@ function handleLogout() {
   padding-bottom: 20px;
 }
 
+.avatar-edit-button {
+  margin-top: -2px;
+}
+
 .avatar-circle {
   width: 72px;
   height: 72px;
@@ -348,16 +422,6 @@ function handleLogout() {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.avatar-block h3,
-.avatar-block p {
-  margin: 0;
-}
-
-.avatar-block p {
-  margin-top: 8px;
-  color: var(--text-secondary);
 }
 
 .logout-button {
@@ -417,6 +481,24 @@ function handleLogout() {
 .member-word-card strong,
 .member-word-card p {
   display: block;
+}
+
+.about-card {
+  padding: 24px;
+  border-radius: 20px;
+  background: #f8fbff;
+  border: 1px solid var(--line-soft);
+}
+
+.about-card h2 {
+  margin: 0 0 20px;
+  font-size: 28px;
+}
+
+.about-card p {
+  margin: 0 0 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
 }
 
 .member-word-card p {

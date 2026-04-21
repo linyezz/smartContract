@@ -41,6 +41,11 @@
 
       <el-form label-position="top">
         <el-form-item label="智能脱敏类别">
+          <div class="type-shortcut-row">
+            <el-button link type="primary" @click="toggleAllSmartTypes">
+              {{ allSmartTypesSelected ? '取消全选' : '全选' }}
+            </el-button>
+          </div>
           <el-checkbox-group v-model="form.enabledTypes">
             <el-checkbox
               v-for="item in presetTypeOptions"
@@ -66,9 +71,6 @@
         </el-button>
         <el-button :disabled="!hasExportableResult" @click="handleDownload">
           另存为
-        </el-button>
-        <el-button :disabled="!result.exportPath" @click="handleOpenExportPath">
-          打开归档
         </el-button>
         <el-button :disabled="processing || !hasTaskState" @click="resetTaskState">
           清空任务
@@ -237,7 +239,7 @@ import {
   saveMaskedResult
 } from '../utils/file'
 import { runPdfOcr, runPdfOcrWithWorker } from '../utils/ocr'
-import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
+import { exportMaskedResultToArchive } from '../utils/exports'
 import {
   buildManualPdfRegionHitList,
   cloneManualSelections,
@@ -285,6 +287,7 @@ const manualDraftPdfRegions = ref([])
 let unlistenNativeDragDrop = null
 
 const visibleWords = computed(() => authStore.currentUser?.customWords || [])
+const allSmartTypesSelected = computed(() => form.enabledTypes.length === presetTypeOptions.length)
 const sourceLabelMap = {
   external: '外部识别',
   regex: '规则',
@@ -414,6 +417,12 @@ function resetTaskState() {
   debugError.value = ''
   previewFullscreen.value = false
   processingStage.value = ''
+}
+
+function toggleAllSmartTypes() {
+  form.enabledTypes = allSmartTypesSelected.value
+    ? []
+    : presetTypeOptions.map((item) => item.value)
 }
 
 function buildManualTextEntities(selections = []) {
@@ -808,18 +817,6 @@ async function handleDownload() {
   }
 }
 
-async function handleOpenExportPath() {
-  if (!result.exportPath) {
-    return
-  }
-  try {
-    await openLocalPath(result.exportPath)
-  } catch (error) {
-    debugError.value = String(error?.stack || error?.message || error)
-    ElMessage.error(error.message || '打开路径失败')
-  }
-}
-
 getCurrentWebview().onDragDropEvent((event) => {
   const payload = event.payload
 
@@ -1038,6 +1035,12 @@ onBeforeUnmount(() => {
   margin-top: 14px;
 }
 
+.type-shortcut-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 8px;
+}
+
 .word-list {
   display: flex;
   flex-wrap: wrap;
@@ -1133,7 +1136,8 @@ onBeforeUnmount(() => {
 }
 
 .stat-card strong {
-  font-size: 24px;
+  font-size: 22px;
+  line-height: 1.4;
 }
 
 .preview-grid {
