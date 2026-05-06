@@ -1,4 +1,17 @@
 import * as bankcard from 'bankcard'
+import { BUILT_IN_CHINESE_NAMES } from '../data/nameDictionary.js'
+import { extractSurnameAnchorEntities } from './surnameNer.js'
+
+const CHINESE_CHAR_RE = /[\u4e00-\u9fa5]/
+const NAME_DICTIONARY = (() => {
+  const set = new Set()
+  for (const n of BUILT_IN_CHINESE_NAMES) {
+    if (typeof n === 'string' && /^[\u4e00-\u9fa5]{2,4}$/.test(n)) {
+      set.add(n)
+    }
+  }
+  return set
+})()
 
 const COMPANY_PATTERN = /(?<![\u4e00-\u9fa5A-Za-z0-9])([\u4e00-\u9fa5A-Za-z0-9（）()·&\s]{4,120}?(?:有\s*限\s*责\s*任\s*公\s*司|股\s*份\s*有\s*限\s*公\s*司|有\s*限\s*公\s*司|公\s*司|集\s*团|事\s*务\s*所|中\s*心|研\s*究\s*院))(?![\u4e00-\u9fa5A-Za-z0-9])/g
 const LABELED_NAME_PATTERN = /((?:姓\s*名|甲\s*方\s*代\s*表|乙\s*方\s*代\s*表|联\s*系\s*人|指\s*定\s*联\s*系\s*人|签\s*署\s*人|法\s*定\s*代\s*表\s*人|收\s*货\s*人|接\s*货\s*人)\s*(?:[：:]|为)\s*)([\u4e00-\u9fa5][\s\u3000]*[\u4e00-\u9fa5](?:[\s\u3000]*[\u4e00-\u9fa5]){0,4})/g
@@ -315,7 +328,93 @@ function applyNamedPersonRule(sourceText, hitList) {
     hitList
   )
 
+  nextText = applyDictionaryNameRule(nextText, hitList)
+  nextText = applySurnameAnchorRule(nextText, hitList)
+
   return nextText
+}
+
+/**
+ * 基于内置真实姓名字典扫描全文，命中即按姓名脱敏。
+ * 算法：从左到右每个中文字符作为起点，贪婪尝试 4 → 3 → 2 字。
+ * 误伤防护：
+ *   - 3-4 字命中：直接接受（3-4 字中文片段极少嵌入到普通词组中）
+ *   - 2 字命中：要求左侧或右侧至少一侧不是中文（处于词边界），避免命中长姓名/词组中的同名片段
+ */
+function applyDictionaryNameRule(sourceText, hitList) {
+  if (!sourceText || NAME_DICTIONARY.size === 0) {
+    return sourceText
+  }
+  const out = []
+  const len = sourceText.length
+  let i = 0
+  while (i < len) {
+    const ch = sourceText[i]
+    if (!CHINESE_CHAR_RE.test(ch)) {
+      out.push(ch)
+      i += 1
+      continue
+    }
+    let matched = null
+    for (const size of [4, 3, 2]) {
+      if (i + size > len) continue
+      const candidate = sourceText.slice(i, i + size)
+      let allChinese = true
+      for (let k = 0; k < size; k += 1) {
+        if (!CHINESE_CHAR_RE.test(candidate[k])) {
+          allChinese = false
+          break
+        }
+      }
+      if (!allChinese) continue
+      if (!NAME_DICTIONARY.has(candidate)) continue
+      if (size === 2) {
+        const prev = i > 0 ? sourceText[i - 1] : ''
+        const next = i + size < len ? sourceText[i + size] : ''
+        const leftBoundary = !prev || !CHINESE_CHAR_RE.test(prev)
+        const rightBoundary = !next || !CHINESE_CHAR_RE.test(next)
+        if (!leftBoundary && !rightBoundary) continue
+      }
+      matched = { value: candidate, size }
+      break
+    }
+    if (matched) {
+      const masked = maskChineseName(matched.value)
+      hitList.push({
+        source: 'dictionary',
+        type: '姓名',
+        original: matched.value,
+        masked
+      })
+      out.push(masked)
+      i += matched.size
+    } else {
+      out.push(ch)
+      i += 1
+    }
+  }
+  return out.join('')
+}
+
+function applySurnameAnchorRule(sourceText, hitList) {
+  if (!sourceText) return sourceText
+  const entities = extractSurnameAnchorEntities(sourceText)
+  if (!entities.length) return sourceText
+  const sorted = entities.slice().sort((a, b) => b.start - a.start)
+  let result = sourceText
+  for (const item of sorted) {
+    const original = result.slice(item.start, item.end)
+    if (!original) continue
+    const masked = maskChineseName(original)
+    result = result.slice(0, item.start) + masked + result.slice(item.end)
+    hitList.push({
+      source: 'surname-anchor',
+      type: '姓名',
+      original,
+      masked,
+    })
+  }
+  return result
 }
 
 function applyBankCardRule(sourceText, hitList) {

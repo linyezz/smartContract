@@ -1,10 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist'
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { readFile } from '@tauri-apps/plugin-fs'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString()
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc
 
 function uint8ArrayToArrayBuffer(bytes) {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)

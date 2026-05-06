@@ -1,11 +1,12 @@
 import mammoth from 'mammoth'
+import { invoke } from '@tauri-apps/api/core'
 import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { buildMaskedDocument, getExportDescriptor } from './exports'
 import { extractPdfTextWithDiagnostics, uint8ArrayToArrayBuffer } from './pdf'
 
 export const ACCEPT_FILE_TYPES = ['pdf', 'doc', 'docx', 'md']
-export const WORD_LIBRARY_FILE_TYPES = ['docx', 'txt', 'md']
+export const WORD_LIBRARY_FILE_TYPES = ['doc', 'docx', 'txt']
 
 function cloneUint8Array(bytes) {
   return new Uint8Array(bytes)
@@ -91,9 +92,19 @@ async function extractDocxText(bytes) {
   return result.value
 }
 
-function extractLegacyDocText(bytes) {
-  const preview = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
-  return preview.replace(/\0/g, ' ').replace(/\s+/g, ' ').trim()
+async function extractLegacyDocText(payload, bytes) {
+  try {
+    const text = await invoke('extract_legacy_doc_text', {
+      payload: {
+        inputPath: payload.path || '',
+        sourceBytes: bytes
+      }
+    })
+    return String(text || '').trim()
+  } catch (error) {
+    const message = typeof error === 'string' ? error : error?.message
+    throw new Error(message || 'DOC 文档解析失败，请确认文件未加密或损坏。')
+  }
 }
 
 export async function readContractFile(fileSource) {
@@ -129,7 +140,7 @@ export async function readContractFile(fileSource) {
   } else if (extension === 'md') {
     text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
   } else if (extension === 'doc') {
-    text = extractLegacyDocText(bytes)
+    text = await extractLegacyDocText(payload, bytes)
   } else {
     throw new Error('暂不支持该文件格式。')
   }
@@ -248,10 +259,12 @@ export async function readWordLibraryFile(fileSource) {
   let text = ''
   if (extension === 'docx') {
     text = await extractDocxText(bytes)
-  } else if (extension === 'txt' || extension === 'md') {
+  } else if (extension === 'doc') {
+    text = await extractLegacyDocText(payload, bytes)
+  } else if (extension === 'txt') {
     text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
   } else {
-    throw new Error('仅支持导入 DOCX、TXT、MD 文本文件。')
+    throw new Error('仅支持导入 DOC、DOCX、TXT 文本文件。')
   }
 
   return {

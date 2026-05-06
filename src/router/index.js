@@ -5,6 +5,7 @@ import LoginPage from '../pages/LoginPage.vue'
 import HomePage from '../pages/HomePage.vue'
 import HistoryPage from '../pages/HistoryPage.vue'
 import ProfilePage from '../pages/ProfilePage.vue'
+import WordLibraryPage from '../pages/WordLibraryPage.vue'
 import { useAuthStore } from '../store/auth'
 
 const router = createRouter({
@@ -29,6 +30,11 @@ const router = createRouter({
           path: 'history',
           name: 'history',
           component: HistoryPage
+        },
+        {
+          path: 'word-library',
+          name: 'word-library',
+          component: WordLibraryPage
         },
         {
           path: 'profile',

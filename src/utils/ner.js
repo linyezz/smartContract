@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { maskAddress, maskChineseName } from './desensitize'
+import { detectLlmSensitiveEntities } from './llmDesensitize'
 
 const ADDRESS_LABEL_CONTEXT_PATTERN = /(?:注册地址|办公地址|联系地址|通讯地址|收货地址|交付地点|项目地址|送达地址|住所地|住\s*所|地\s*址)\s*(?:[：:]|为)?\s*$/
 const ADDRESS_DETAIL_PATTERN = /(?:路|街道|大道|街|巷|镇|乡|村|里|号|栋|座|层|室|单元|园|厦|广场|楼|塔|阁|苑|城|大厦|写字楼|商场|商店|中心|园区|公寓)/
@@ -7,7 +8,28 @@ const ADDRESS_CHAR_PATTERN = /[\u4e00-\u9fa5A-Za-z0-9\-（）()·&]/
 const ADDRESS_BREAK_PATTERN = /[，。,；;]/ 
 const ADDRESS_SECTION_BREAK_PATTERN = /^(?:联系电话|电子邮箱|联系人|账户名称|开户银行|账\s*号|邮编|电话|邮箱|第[一二三四五六七八九十]|甲方|乙方|丙方|经甲乙双方|经双方|依据|本合同)/
 const ADDRESS_TRAILING_BREAK_PATTERN = /\n\s*(?=(?:联系电话|电子邮箱|联系人|账户名称|开户银行|账\s*号|邮编|电话|邮箱|第[一二三四五六七八九十]|甲方|乙方|丙方|经甲乙双方|经双方|依据|本合同))/
+const TYPE_LABEL_MAP = {
+  idCard: '身份证号',
+  mobile: '手机号/座机',
+  email: '邮箱',
+  bankCard: '银行卡号',
+  uscc: '统一社会信用代码',
+  company: '公司名称',
+  namedPerson: '姓名',
+  address: '地址',
+  price: '价格'
+}
+const isDev = import.meta.env.DEV
 
+function debugNer(stage, payload) {
+  if (!isDev) {
+    return
+  }
+
+  console.groupCollapsed(`[NER合并] ${stage}`)
+  console.log(payload)
+  console.groupEnd()
+}
 function countTruthy(parts = []) {
   return parts.filter(Boolean).length
 }
@@ -125,8 +147,18 @@ async function isAddressCandidate(text, entity) {
 }
 
 async function mapEntityToMask(text, entity, enabledTypes) {
-  if (!entity?.text || !enabledTypes.includes(entity.type)) {
+  if (!entity?.text || (entity.source !== 'llm' && !enabledTypes.includes(entity.type))) {
     return null
+  }
+
+  if (entity.masked) {
+    return {
+      start: entity.start,
+      end: entity.end,
+      type: TYPE_LABEL_MAP[entity.type] || entity.type,
+      masked: entity.masked,
+      source: entity.source || 'external'
+    }
   }
 
   if (entity.type === 'company') {
@@ -182,17 +214,67 @@ async function normalizeEntities(text, entities, enabledTypes) {
     })
 }
 
+function normalizeEntityOverlaps(entities = []) {
+  const getPriority = (item) => item?.source === 'llm' ? 2 : 1
+  const getLength = (item) => Math.max(Number(item?.end || 0) - Number(item?.start || 0), 0)
+
+  return [...entities]
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (left.start !== right.start) {
+        return left.start - right.start
+      }
+      if (getPriority(left) !== getPriority(right)) {
+        return getPriority(right) - getPriority(left)
+      }
+      return getLength(right) - getLength(left)
+    })
+    .reduce((result, current) => {
+      const previous = result[result.length - 1]
+      if (!previous || current.start >= previous.end) {
+        result.push(current)
+      } else if (
+        getPriority(current) > getPriority(previous)
+        || (getPriority(current) === getPriority(previous) && getLength(current) > getLength(previous))
+      ) {
+        result[result.length - 1] = current
+      }
+      return result
+    }, [])
+}
+
 export async function detectPreciseChineseEntities(text, enabledTypes = []) {
   const targetTypes = enabledTypes.filter((type) => ['company', 'namedPerson', 'address'].includes(type))
-  if (!text?.trim() || !targetTypes.length) {
+  if (!text?.trim() || !enabledTypes.length) {
     return []
   }
 
+  let localEntities = []
+  let llmEntities = []
+
   try {
-    const entities = await invoke('detect_chinese_entities', { text })
-    return await normalizeEntities(text, entities, targetTypes)
+    if (targetTypes.length) {
+      const entities = await invoke('detect_chinese_entities', { text })
+      localEntities = await normalizeEntities(text, entities, targetTypes)
+    }
   } catch (error) {
     console.warn('detect_chinese_entities failed, fallback to JS rules only', error)
-    return []
   }
+
+  try {
+    const entities = await detectLlmSensitiveEntities(text, enabledTypes)
+    debugNer('大模型原始实体', entities)
+    llmEntities = await normalizeEntities(text, entities, enabledTypes)
+    debugNer('大模型归一化实体', llmEntities)
+  } catch (error) {
+    debugNer('大模型实体归一化失败', error)
+    console.warn('detect_llm_sensitive_entities failed, fallback to local rules only', error)
+  }
+
+  const mergedEntities = normalizeEntityOverlaps([
+    ...llmEntities,
+    ...localEntities
+  ])
+  debugNer('最终外部实体', mergedEntities)
+  return mergedEntities
 }

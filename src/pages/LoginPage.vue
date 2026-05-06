@@ -1,6 +1,7 @@
 <template>
   <div class="login-shell">
     <div class="login-hero">
+      <img :src="appLogo" alt="极易合同智能脱敏" class="login-logo" />
       <div class="tag-pill">本地存储 · 无服务端依赖</div>
       <h1>极易合同智能脱敏</h1>
       <p>
@@ -91,6 +92,7 @@ import { listen } from '@tauri-apps/api/event'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
+import appLogo from '../assets/app-logo.png'
 import {
   openWecomLoginWindow,
   WECOM_LOGIN_DEBUG_EVENT,
@@ -209,6 +211,15 @@ onBeforeUnmount(() => {
     linear-gradient(180deg, #1a3f93, #2f6fed);
   color: white;
   box-shadow: 0 28px 60px rgba(29, 78, 216, 0.22);
+}
+
+.login-logo {
+  width: 92px;
+  height: 92px;
+  margin-bottom: 22px;
+  border-radius: 24px;
+  object-fit: cover;
+  box-shadow: 0 24px 48px rgba(7, 34, 88, 0.28);
 }
 
 .login-hero h1 {

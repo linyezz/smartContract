@@ -1,6 +1,8 @@
 import dayjs from 'dayjs'
+import JSZip from 'jszip'
+import { invoke } from '@tauri-apps/api/core'
 import { BaseDirectory, appLocalDataDir, join } from '@tauri-apps/api/path'
-import { exists, mkdir, stat, writeFile } from '@tauri-apps/plugin-fs'
+import { exists, mkdir, readFile, stat, writeFile } from '@tauri-apps/plugin-fs'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { buildStyledMaskedPdfBytes, isPdfSource } from './pdf'
 
@@ -24,6 +26,9 @@ function describeError(stage, error) {
 function resolveExportExtension(extension) {
   if (extension === 'pdf') {
     return 'pdf'
+  }
+  if (extension === 'doc') {
+    return 'doc'
   }
   if (extension === 'md') {
     return 'md'
@@ -78,6 +83,133 @@ async function generateDocxBytes(maskedText) {
     return new Uint8Array(buffer)
   } catch (error) {
     throw describeError('DOCX生成', error)
+  }
+}
+
+function fitMaskToOriginal(masked = '', original = '') {
+  const originalChars = Array.from(String(original || ''))
+  const maskedChars = Array.from(String(masked || '***')).slice(0, originalChars.length)
+  while (maskedChars.length < originalChars.length) {
+    maskedChars.push('*')
+  }
+  return maskedChars.join('')
+}
+
+async function buildMaskedLegacyDocBytes(options = {}) {
+  try {
+    const bytes = await invoke('mask_legacy_doc_document', {
+      payload: {
+        inputPath: options.sourcePath || '',
+        sourceBytes: options.sourceBytes || null,
+        hitList: options.hitList || []
+      }
+    })
+    return toUint8Array(bytes)
+  } catch (error) {
+    const message = typeof error === 'string' ? error : error?.message
+    throw describeError('DOC格式脱敏', message || '旧版 Word 文档脱敏失败')
+  }
+}
+
+function collectDocxTextNodes(xmlDocument) {
+  const nodes = [
+    ...Array.from(xmlDocument.getElementsByTagName('w:t')),
+    ...Array.from(xmlDocument.getElementsByTagNameNS('*', 't'))
+  ]
+  return [...new Set(nodes)]
+}
+
+function maskDocxXml(xmlText, hitList = []) {
+  const parser = new DOMParser()
+  const xmlDocument = parser.parseFromString(xmlText, 'application/xml')
+  if (xmlDocument.getElementsByTagName('parsererror').length) {
+    return { xmlText, changed: false }
+  }
+
+  const textNodes = collectDocxTextNodes(xmlDocument)
+  if (!textNodes.length) {
+    return { xmlText, changed: false }
+  }
+
+  const nodeLengths = textNodes.map((node) => Array.from(node.textContent || '').length)
+  const fullText = textNodes.map((node) => node.textContent || '').join('')
+  let chars = Array.from(fullText)
+  let changed = false
+  const rules = [...hitList]
+    .filter((item) => item?.original && item?.masked && item.original !== item.masked)
+    .sort((a, b) => Array.from(String(b.original)).length - Array.from(String(a.original)).length)
+
+  for (const item of rules) {
+    const original = String(item.original || '')
+    if (!original) {
+      continue
+    }
+
+    let searchText = chars.join('')
+    let index = searchText.indexOf(original)
+    while (index !== -1) {
+      chars.splice(index, Array.from(original).length, ...Array.from(fitMaskToOriginal(item.masked, original)))
+      changed = true
+      searchText = chars.join('')
+      index = searchText.indexOf(original, index + Array.from(original).length)
+    }
+  }
+
+  if (!changed) {
+    return { xmlText, changed: false }
+  }
+
+  let offset = 0
+  textNodes.forEach((node, nodeIndex) => {
+    const length = nodeLengths[nodeIndex]
+    node.textContent = chars.slice(offset, offset + length).join('')
+    offset += length
+  })
+
+  return {
+    xmlText: new XMLSerializer().serializeToString(xmlDocument),
+    changed: true
+  }
+}
+
+async function buildMaskedDocxBytes(options = {}) {
+  const sourceBytes = options.sourceBytes || (options.sourcePath ? await readFile(options.sourcePath) : null)
+  if (!sourceBytes) {
+    throw describeError('DOCX格式脱敏', '缺少原始 DOCX 文件，无法保持原格式输出。')
+  }
+
+  try {
+    const zip = await JSZip.loadAsync(toUint8Array(sourceBytes))
+    const xmlFiles = Object.keys(zip.files).filter((path) =>
+      /^word\/(?:document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$/i.test(path)
+    )
+
+    let changed = false
+    for (const path of xmlFiles) {
+      const file = zip.file(path)
+      if (!file) {
+        continue
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const xmlText = await file.async('string')
+      const masked = maskDocxXml(xmlText, options.hitList || [])
+      if (masked.changed) {
+        zip.file(path, masked.xmlText)
+        changed = true
+      }
+    }
+
+    if (!changed && (options.hitList || []).some((item) => item?.original)) {
+      throw new Error('未能在 DOCX 原文件结构中定位到需要脱敏的内容。')
+    }
+
+    const buffer = await zip.generateAsync({
+      type: 'uint8array',
+      compression: 'DEFLATE'
+    })
+    return toUint8Array(buffer)
+  } catch (error) {
+    throw describeError('DOCX格式脱敏', error)
   }
 }
 
@@ -196,6 +328,13 @@ export async function buildMaskedDocument(fileName, extension, maskedText, optio
     } else {
       bytes = await generatePdfBytes(fileName, maskedText)
     }
+  } else if (exportExtension === 'doc') {
+    if (!options.sourcePath && !options.sourceBytes) {
+      throw describeError('DOC格式脱敏', '缺少原始 DOC 文件，无法保持原格式输出。')
+    }
+    bytes = await buildMaskedLegacyDocBytes(options)
+  } else if (exportExtension === 'docx') {
+    bytes = await buildMaskedDocxBytes(options)
   } else if (exportExtension === 'md') {
     bytes = toUint8Array(new TextEncoder().encode(maskedText))
   } else {

@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "baseUrl": "https://api.deepseek.com",
+  "apiKey": "",
+  "model": "deepseek-v4-pro",
+  "thinking": {
+    "type": "enabled"
+  },
+  "reasoningEffort": "high",
+  "timeoutSeconds": 60
+}

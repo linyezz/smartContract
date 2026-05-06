@@ -23,6 +23,17 @@
         </p>
         <small>也可以直接把文件拖到这里</small>
       </div>
+      <div v-if="currentFile" class="file-action-row">
+        <el-button
+          plain
+          type="danger"
+          :icon="Delete"
+          :disabled="processing"
+          @click="resetTaskState"
+        >
+          删除
+        </el-button>
+      </div>
 
       <el-alert
         v-if="pdfAnalysisAlert"
@@ -34,12 +45,12 @@
         :closable="false"
       />
 
-      <el-space wrap class="mode-row">
-        <el-switch v-model="form.enableSmart" active-text="启用智能脱敏" />
-        <el-switch v-model="form.includeCustomWords" active-text="叠加自定义词库" />
-      </el-space>
+      <el-radio-group v-model="form.mode" class="mode-row">
+        <el-radio-button label="smart">智能脱敏</el-radio-button>
+        <el-radio-button label="custom">自定义脱敏</el-radio-button>
+      </el-radio-group>
 
-      <el-form label-position="top">
+      <el-form v-if="form.mode === 'custom'" label-position="top">
         <el-form-item label="智能脱敏类别">
           <div class="type-shortcut-row">
             <el-button link type="primary" @click="toggleAllSmartTypes">
@@ -58,22 +69,24 @@
         </el-form-item>
 
         <el-form-item label="自定义脱敏词">
-          <div class="word-list">
-            <span v-for="word in visibleWords" :key="word" class="word-tag">{{ word }}</span>
-            <span v-if="visibleWords.length === 0" class="empty-tip">当前用户暂无自定义脱敏词</span>
+          <div class="group-summary" role="button" tabindex="0" @click="goWordLibrary" @keyup.enter="goWordLibrary">
+            <span
+              v-for="group in visibleWordGroups"
+              :key="group.id"
+              class="word-tag"
+              :class="{ disabled: !group.enabled }"
+            >
+              {{ group.name }} · {{ group.words.length }}
+            </span>
+            <span v-if="visibleWordGroups.length === 0" class="empty-tip">当前用户暂无自定义脱敏词分组</span>
+            <el-button link type="primary">进入脱敏词库</el-button>
           </div>
         </el-form-item>
       </el-form>
 
       <div class="action-row">
-        <el-button type="primary" :loading="processing" @click="handleMask">
+        <el-button class="primary-mask-button" type="primary" size="large" :loading="processing" @click="handleMask">
           开始脱敏
-        </el-button>
-        <el-button :disabled="!hasExportableResult" @click="handleDownload">
-          另存为
-        </el-button>
-        <el-button :disabled="processing || !hasTaskState" @click="resetTaskState">
-          清空任务
         </el-button>
       </div>
 
@@ -89,7 +102,7 @@
 
       <div class="stats-grid">
         <div class="stat-card">
-          <span>命中项</span>
+          <span>敏感信息识别</span>
           <strong>{{ result.hitList.length }}</strong>
         </div>
         <div class="stat-card">
@@ -106,17 +119,43 @@
             <el-button plain :disabled="!currentFile || processing" @click="openManualMaskDialog">
               手动脱敏
             </el-button>
-            <el-button plain :disabled="processing || (!currentFile && !result.originalText)" @click="previewFullscreen = true">
+            <el-button
+              plain
+              :icon="FolderOpened"
+              :disabled="!result.exportPath"
+              @click="handleOpenExportFile"
+            >
+              打开文件夹
+            </el-button>
+            <el-button
+              plain
+              :icon="Download"
+              :disabled="!hasExportableResult"
+              @click="handleDownload"
+            >
+              另存为
+            </el-button>
+            <el-button plain :disabled="processing || !currentFile" @click="previewFullscreen = true">
               全屏预览
             </el-button>
           </el-space>
         </template>
       </SectionHeader>
       <div class="preview-shell">
-        <div v-if="showProcessingPreviewState" class="preview-state-card">
+        <div v-if="showWaitingFilePreviewState" class="preview-state-card">
+          <span class="preview-state-badge">等待选择</span>
+          <strong>请选择合同文件</strong>
+          <p>选择或拖入文件后，这里会展示脱敏前后的对比预览。</p>
+        </div>
+        <div v-else-if="showProcessingPreviewState" class="preview-state-card">
           <span class="preview-state-badge">{{ previewStageLabel }}</span>
           <strong>{{ previewStageTitle }}</strong>
           <p>{{ previewStageDescription }}</p>
+        </div>
+        <div v-else-if="showPendingPreviewState" class="preview-state-card">
+          <span class="preview-state-badge">待脱敏</span>
+          <strong>文件已加载，尚未执行脱敏</strong>
+          <p>点击左侧“开始脱敏”后，再展示原文与脱敏结果对比。</p>
         </div>
         <PdfComparePreview
           v-else-if="showPdfVisualPreview"
@@ -127,6 +166,15 @@
           :masked-text="result.maskedText"
           :file-name="currentFile.fileName"
           :extension="currentFile.extension"
+        />
+        <DocFormatPreview
+          v-else-if="showWordFormatPreview"
+          :source-path="currentFile.path"
+          :source-bytes="currentFile.bytes"
+          :file-name="currentFile.fileName"
+          :extension="currentFile.extension"
+          :hit-list="result.hitList"
+          :masked-text="result.maskedText"
         />
         <div v-else class="preview-grid">
           <div class="preview-panel">
@@ -139,7 +187,7 @@
           </div>
         </div>
       </div>
-      <el-table :data="result.hitList.slice(0, 20)" height="280" empty-text="暂无命中记录">
+      <el-table v-if="currentFile" :data="result.hitList.slice(0, 20)" height="280" empty-text="暂无敏感信息识别记录">
         <el-table-column prop="source" label="来源" width="110">
           <template #default="{ row }">
             {{ sourceLabelMap[row.source] || row.source || '-' }}
@@ -154,10 +202,20 @@
 
   <el-dialog v-model="previewFullscreen" title="对比预览" fullscreen class="preview-dialog">
     <div class="preview-dialog-body">
-      <div v-if="showProcessingPreviewState" class="preview-state-card fullscreen-state-card">
+      <div v-if="showWaitingFilePreviewState" class="preview-state-card fullscreen-state-card">
+        <span class="preview-state-badge">等待选择</span>
+        <strong>请选择合同文件</strong>
+        <p>选择或拖入文件后，这里会展示脱敏前后的对比预览。</p>
+      </div>
+      <div v-else-if="showProcessingPreviewState" class="preview-state-card fullscreen-state-card">
         <span class="preview-state-badge">{{ previewStageLabel }}</span>
         <strong>{{ previewStageTitle }}</strong>
         <p>{{ previewStageDescription }}</p>
+      </div>
+      <div v-else-if="showPendingPreviewState" class="preview-state-card fullscreen-state-card">
+        <span class="preview-state-badge">待脱敏</span>
+        <strong>文件已加载，尚未执行脱敏</strong>
+        <p>点击“开始脱敏”后，再展示原文与脱敏结果对比。</p>
       </div>
       <PdfComparePreview
         v-else-if="showPdfVisualPreview"
@@ -168,6 +226,16 @@
         :masked-text="result.maskedText"
         :file-name="currentFile?.fileName"
         :extension="currentFile?.extension"
+        is-fullscreen
+      />
+      <DocFormatPreview
+        v-else-if="showWordFormatPreview"
+        :source-path="currentFile?.path"
+        :source-bytes="currentFile?.bytes"
+        :file-name="currentFile?.fileName"
+        :extension="currentFile?.extension"
+        :hit-list="result.hitList"
+        :masked-text="result.maskedText"
         is-fullscreen
       />
       <div v-else class="preview-grid fullscreen-grid">
@@ -221,12 +289,15 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, reactive } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Delete, Download, FolderOpened } from '@element-plus/icons-vue'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useAuthStore } from '../store/auth'
 import { useHistoryStore } from '../store/history'
 import SectionHeader from '../components/SectionHeader.vue'
 import PdfComparePreview from '../components/PdfComparePreview.vue'
+import DocFormatPreview from '../components/DocFormatPreview.vue'
 import TextManualMaskEditor from '../components/TextManualMaskEditor.vue'
 import PdfManualMaskEditor from '../components/PdfManualMaskEditor.vue'
 import { presetTypeOptions, desensitizeText } from '../utils/desensitize'
@@ -239,7 +310,7 @@ import {
   saveMaskedResult
 } from '../utils/file'
 import { runPdfOcr, runPdfOcrWithWorker } from '../utils/ocr'
-import { exportMaskedResultToArchive } from '../utils/exports'
+import { exportMaskedResultToArchive, openLocalPath } from '../utils/exports'
 import {
   buildManualPdfRegionHitList,
   cloneManualSelections,
@@ -248,14 +319,18 @@ import {
 
 const authStore = useAuthStore()
 const historyStore = useHistoryStore()
+const router = useRouter()
 const isDev = import.meta.env.DEV
 
 authStore.bootstrap()
 historyStore.bootstrap()
 
+function hasEnabledCustomWords() {
+  return (authStore.activeCustomWords || []).length > 0
+}
+
 const form = reactive({
-  enableSmart: true,
-  includeCustomWords: true,
+  mode: hasEnabledCustomWords() ? 'custom' : 'smart',
   enabledTypes: presetTypeOptions.map((item) => item.value)
 })
 
@@ -280,16 +355,20 @@ const debugError = ref('')
 const previewFullscreen = ref(false)
 const manualMaskVisible = ref(false)
 const processingStage = ref('')
+const activeHistoryRecordId = ref('')
 const manualTextSelections = ref([])
 const manualPdfRegions = ref([])
 const manualDraftTextSelections = ref([])
 const manualDraftPdfRegions = ref([])
+const autoArchiveExtensions = ['pdf', 'doc', 'docx', 'md']
 let unlistenNativeDragDrop = null
 
-const visibleWords = computed(() => authStore.currentUser?.customWords || [])
+const visibleWordGroups = computed(() => authStore.currentWordGroups)
+const activeCustomWords = computed(() => authStore.activeCustomWords)
 const allSmartTypesSelected = computed(() => form.enabledTypes.length === presetTypeOptions.length)
 const sourceLabelMap = {
   external: '外部识别',
+  llm: '大模型',
   regex: '规则',
   custom: '自定义词',
   manual: '手动兜底'
@@ -297,11 +376,13 @@ const sourceLabelMap = {
 const modeLabel = computed(() => {
   const modes = []
 
-  if (form.enableSmart) {
+  if (form.mode === 'smart') {
     modes.push('智能脱敏')
-  }
-  if (form.includeCustomWords) {
-    modes.push('自定义词库')
+  } else {
+    modes.push('自定义脱敏')
+    if (activeCustomWords.value.length) {
+      modes.push('自定义词库')
+    }
   }
   if (manualTextSelections.value.length || manualPdfRegions.value.length) {
     modes.push('手动脱敏')
@@ -310,9 +391,11 @@ const modeLabel = computed(() => {
   return modes.length ? modes.join(' + ') : '未选择'
 })
 const showProcessingPreviewState = computed(() => processing.value && Boolean(currentFile.value))
+const hasMaskedResult = computed(() => Boolean(result.maskedText || result.hitList.length))
+const showPendingPreviewState = computed(() => Boolean(currentFile.value) && !processing.value && !hasMaskedResult.value)
 const showPdfVisualPreview = computed(() => currentFile.value?.extension === 'pdf')
-const hasExportableResult = computed(() => Boolean(result.maskedText || result.hitList.length))
-const hasTaskState = computed(() => Boolean(currentFile.value || result.maskedText || result.hitList.length || result.exportPath))
+const showWordFormatPreview = computed(() => ['doc', 'docx'].includes(currentFile.value?.extension))
+const hasExportableResult = computed(() => hasMaskedResult.value)
 const manualSourceText = computed(() => autoResult.maskedText || currentFile.value?.text || '')
 const manualDialogTitle = computed(() => currentFile.value?.extension === 'pdf' ? '手动区域脱敏' : '手动选词脱敏')
 const manualDialogTip = computed(() => {
@@ -321,13 +404,29 @@ const manualDialogTip = computed(() => {
   }
   return `当前已选 ${manualDraftTextSelections.value.length} 段文字，完成后将输出最终文件。`
 })
-const previewStageLabel = computed(() => processingStage.value === 'masking' ? '脱敏中' : '识别中')
-const previewStageTitle = computed(() => processingStage.value === 'masking'
-  ? '正在生成脱敏结果'
-  : '正在识别文档内容')
-const previewStageDescription = computed(() => processingStage.value === 'masking'
-  ? '正在处理敏感信息，请稍候。'
-  : '扫描件识别通常会稍慢一些，请耐心等待。')
+const previewStageLabel = computed(() => {
+  if (processingStage.value === 'ai') {
+    return 'AI 处理中'
+  }
+  return processingStage.value === 'masking' ? '脱敏中' : '识别中'
+})
+const previewStageTitle = computed(() => {
+  if (processingStage.value === 'ai') {
+    return 'AI 正在处理'
+  }
+  return processingStage.value === 'masking'
+    ? '正在生成脱敏结果'
+    : '正在识别文档内容'
+})
+const previewStageDescription = computed(() => {
+  if (processingStage.value === 'ai') {
+    return '大模型正在识别敏感信息，请稍候。'
+  }
+  return processingStage.value === 'masking'
+    ? '正在处理敏感信息，请稍候。'
+    : '扫描件识别通常会稍慢一些，请耐心等待。'
+})
+const showWaitingFilePreviewState = computed(() => !currentFile.value)
 const pdfAnalysisAlert = computed(() => {
   const analysis = currentFile.value?.analysis
   if (!analysis || analysis.type !== 'pdf') {
@@ -409,20 +508,24 @@ function resetTaskState() {
   resetManualMaskState()
   resetAutoResultState()
   resetResultState()
-  form.enableSmart = true
-  form.includeCustomWords = true
+  form.mode = hasEnabledCustomWords() ? 'custom' : 'smart'
   form.enabledTypes = presetTypeOptions.map((item) => item.value)
   currentFile.value = null
   processing.value = false
   debugError.value = ''
   previewFullscreen.value = false
   processingStage.value = ''
+  activeHistoryRecordId.value = ''
 }
 
 function toggleAllSmartTypes() {
   form.enabledTypes = allSmartTypesSelected.value
     ? []
     : presetTypeOptions.map((item) => item.value)
+}
+
+function goWordLibrary() {
+  router.push({ name: 'word-library' })
 }
 
 function buildManualTextEntities(selections = []) {
@@ -466,7 +569,7 @@ function recordTaskResult(maskedText, hitList, exportMeta = {}) {
     return
   }
 
-  historyStore.createRecord({
+  const payload = {
     fileName: currentFile.value.fileName,
     extension: currentFile.value.extension,
     fileSize: currentFile.value.sizeLabel,
@@ -479,7 +582,19 @@ function recordTaskResult(maskedText, hitList, exportMeta = {}) {
     exportPath: exportMeta.absolutePath || exportMeta.path || '',
     exportRelativePath: exportMeta.relativePath || '',
     exportFolder: exportMeta.folder || ''
-  })
+  }
+
+  if (activeHistoryRecordId.value) {
+    const updated = historyStore.updateRecord(activeHistoryRecordId.value, payload)
+    if (!updated) {
+      const record = historyStore.createRecord(payload)
+      activeHistoryRecordId.value = record.id
+    }
+    return
+  }
+
+  const record = historyStore.createRecord(payload)
+  activeHistoryRecordId.value = record.id
 }
 
 async function ensureAutoPreviewReady(showMessage = false) {
@@ -488,7 +603,11 @@ async function ensureAutoPreviewReady(showMessage = false) {
     return false
   }
 
-  const hasAutomaticStrategy = form.enableSmart || form.includeCustomWords
+  const enabledTypesToUse = form.mode === 'smart'
+    ? presetTypeOptions.map((item) => item.value)
+    : form.enabledTypes
+  const customWordsToUse = form.mode === 'custom' ? activeCustomWords.value : []
+  const hasAutomaticStrategy = enabledTypesToUse.length > 0 || customWordsToUse.length > 0
 
   processing.value = true
   processingStage.value = hasAutomaticStrategy ? 'recognizing' : 'masking'
@@ -500,16 +619,17 @@ async function ensureAutoPreviewReady(showMessage = false) {
     }
 
     let externalEntities = []
-    if (form.enableSmart) {
-      externalEntities = await detectPreciseChineseEntities(currentFile.value.text, form.enabledTypes)
+    if (enabledTypesToUse.length) {
+      processingStage.value = 'ai'
+      externalEntities = await detectPreciseChineseEntities(currentFile.value.text, enabledTypesToUse)
     }
 
     processingStage.value = 'masking'
     const response = desensitizeText({
       text: currentFile.value.text,
-      enableSmart: form.enableSmart,
-      enabledTypes: form.enabledTypes,
-      customWords: form.includeCustomWords ? visibleWords.value : [],
+      enableSmart: true,
+      enabledTypes: enabledTypesToUse,
+      customWords: customWordsToUse,
       externalEntities
     })
 
@@ -518,10 +638,29 @@ async function ensureAutoPreviewReady(showMessage = false) {
     applyPreviewResult(response.maskedText, response.hitList)
     manualTextSelections.value = []
     manualPdfRegions.value = []
+    let exportMeta = {}
+    if (showMessage && autoArchiveExtensions.includes(currentFile.value.extension)) {
+      exportMeta = await exportMaskedResultToArchive(
+        currentFile.value.fileName,
+        currentFile.value.extension,
+        response.maskedText,
+        {
+          user: authStore.currentUser,
+          sourcePath: currentFile.value.path,
+          sourceBytes: currentFile.value.bytes,
+          hitList: response.hitList,
+          pageAnalyses: currentFile.value.analysis?.pages || []
+        }
+      )
+      result.exportPath = exportMeta.absolutePath
+    }
+    recordTaskResult(response.maskedText, response.hitList, exportMeta)
 
     if (showMessage) {
       ElMessage.success(
-        hasAutomaticStrategy
+        exportMeta.absolutePath
+          ? `自动脱敏完成，共处理 ${response.hitList.length} 项，原格式文件已输出。`
+          : hasAutomaticStrategy
           ? `自动脱敏完成，共处理 ${response.hitList.length} 项，可继续手动补充。`
           : '已准备好手动脱敏内容，可继续补充。'
       )
@@ -573,8 +712,9 @@ async function applySelectedFile(path) {
   resetManualMaskState()
   resetAutoResultState()
   currentFile.value = await readContractFile(path)
-  applyPreviewResult('', [], { keepExportPath: false })
-  result.originalText = currentFile.value.text
+  resetResultState()
+  result.sourcePath = currentFile.value.path || ''
+  activeHistoryRecordId.value = ''
   debugError.value = ''
   ElMessage.success(`已加载 ${currentFile.value.fileName}`)
 }
@@ -734,11 +874,6 @@ async function applyNativeDroppedPath(path) {
 }
 
 async function handleMask() {
-  if (!form.enableSmart && !form.includeCustomWords) {
-    ElMessage.warning('请至少启用一种自动脱敏方案')
-    return
-  }
-
   resetManualMaskState()
   await ensureAutoPreviewReady(true)
 }
@@ -814,6 +949,20 @@ async function handleDownload() {
   } catch (error) {
     debugError.value = String(error?.stack || error?.message || error)
     ElMessage.error(`另存失败：${error.message || '请稍后重试'}`)
+  }
+}
+
+async function handleOpenExportFile() {
+  if (!result.exportPath) {
+    ElMessage.warning('请先完成脱敏输出文件')
+    return
+  }
+
+  try {
+    await openLocalPath(result.exportPath)
+  } catch (error) {
+    debugError.value = String(error?.stack || error?.message || error)
+    ElMessage.error(`打开失败：${error.message || '请稍后重试'}`)
   }
 }
 
@@ -934,6 +1083,12 @@ onBeforeUnmount(() => {
 .upload-box small {
   margin-top: 10px;
   color: var(--brand-dark);
+}
+
+.file-action-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .preview-grid {
@@ -1062,6 +1217,14 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 12px;
   margin-top: 12px;
+}
+
+.primary-mask-button {
+  width: 100%;
+  min-height: 48px;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 12px 24px rgba(47, 111, 237, 0.18);
 }
 
 .path-card {

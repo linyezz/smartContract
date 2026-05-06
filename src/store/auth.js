@@ -8,6 +8,67 @@ import {
 } from '../utils/storage'
 import { normalizeWecomProfile, requestWecomLogin } from '../utils/wecom'
 
+const DEFAULT_WORD_GROUP_ID = 'group-default'
+const DEFAULT_WORD_GROUP_NAME = '默认分组'
+
+function uniqueWords(words = []) {
+  return Array.from(
+    new Set(
+      words
+        .map((word) => String(word || '').trim())
+        .filter(Boolean)
+    )
+  )
+}
+
+function createDefaultWordGroup(words = []) {
+  return {
+    id: DEFAULT_WORD_GROUP_ID,
+    name: DEFAULT_WORD_GROUP_NAME,
+    enabled: true,
+    words: uniqueWords(words)
+  }
+}
+
+function normalizeCustomWordGroups(member = {}) {
+  const sourceGroups = Array.isArray(member.customWordGroups) ? member.customWordGroups : []
+  const groups = sourceGroups
+    .map((group, index) => ({
+      id: group.id || (index === 0 ? DEFAULT_WORD_GROUP_ID : `group-${Date.now()}-${index}`),
+      name: String(group.name || '').trim() || (index === 0 ? DEFAULT_WORD_GROUP_NAME : `分组 ${index + 1}`),
+      enabled: group.enabled !== false,
+      words: uniqueWords(group.words || [])
+    }))
+    .filter((group) => group.name)
+
+  if (!groups.length) {
+    groups.push(createDefaultWordGroup(member.customWords || []))
+  }
+
+  if (!groups.some((group) => group.id === DEFAULT_WORD_GROUP_ID)) {
+    groups.unshift(createDefaultWordGroup(member.customWords || []))
+  }
+
+  return groups.map((group) => (
+    group.id === DEFAULT_WORD_GROUP_ID
+      ? { ...group, name: group.name || DEFAULT_WORD_GROUP_NAME, enabled: group.enabled !== false }
+      : group
+  ))
+}
+
+function flattenCustomWordGroups(groups = []) {
+  return uniqueWords(groups.flatMap((group) => group.words || []))
+}
+
+function normalizeMember(member = {}) {
+  const customWordGroups = normalizeCustomWordGroups(member)
+  return {
+    ...member,
+    customWordGroups,
+    customWords: flattenCustomWordGroups(customWordGroups)
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const members = ref([])
   const currentUser = ref(null)
@@ -17,14 +78,18 @@ export const useAuthStore = defineStore('auth', () => {
     if (bootstrapped.value) {
       return
     }
-    members.value = getMembers()
+    const normalizedMembers = getMembers().map(normalizeMember)
+    members.value = normalizedMembers
+    void saveMembers(normalizedMembers)
     const currentUserId = getCurrentUserId()
     currentUser.value = members.value.find((item) => item.id === currentUserId) || null
     bootstrapped.value = true
   }
 
   function refreshMembers() {
-    members.value = getMembers()
+    const normalizedMembers = getMembers().map(normalizeMember)
+    members.value = normalizedMembers
+    void saveMembers(normalizedMembers)
     if (currentUser.value) {
       currentUser.value = members.value.find((item) => item.id === currentUser.value.id) || null
     }
@@ -45,14 +110,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function upsertMember(nextMember) {
     const index = members.value.findIndex((item) => item.id === nextMember.id)
+    const normalizedMember = normalizeMember(nextMember)
     const nextMembers =
       index === -1
-        ? [nextMember, ...members.value]
-        : members.value.map((item) => (item.id === nextMember.id ? nextMember : item))
+        ? [normalizedMember, ...members.value]
+        : members.value.map((item) => (item.id === nextMember.id ? normalizedMember : item))
 
     members.value = nextMembers
     await saveMembers(nextMembers)
-    return nextMember
+    return normalizedMember
   }
 
   function buildWecomMember(userInfo) {
@@ -74,6 +140,7 @@ export const useAuthStore = defineStore('auth', () => {
       phone: profile.phone,
       avatar: profile.avatar,
       customWords: existingUser?.customWords || [],
+      customWordGroups: existingUser?.customWordGroups || normalizeCustomWordGroups(existingUser || {}),
       loginType: 'wecom',
       wecomUserId: profile.wecomUserId,
       wecomProfile: profile.rawProfile
@@ -113,8 +180,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function updateProfile(payload) {
+    const normalizedPayload = payload.customWordGroups
+      ? {
+          ...payload,
+          customWordGroups: normalizeCustomWordGroups(payload),
+          customWords: flattenCustomWordGroups(normalizeCustomWordGroups(payload))
+        }
+      : payload
     const nextMembers = members.value.map((item) =>
-      item.id === payload.id ? { ...item, ...payload } : item
+      item.id === payload.id ? normalizeMember({ ...item, ...normalizedPayload }) : item
     )
     members.value = nextMembers
     void saveMembers(nextMembers)
@@ -124,11 +198,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function setCustomWords(userId, customWords) {
-    updateProfile({ id: userId, customWords })
+    updateProfile({ id: userId, customWordGroups: [createDefaultWordGroup(customWords)] })
+  }
+
+  function setCustomWordGroups(userId, customWordGroups) {
+    updateProfile({ id: userId, customWordGroups })
   }
 
   function addMember(member) {
-    const nextMembers = [member, ...members.value]
+    const nextMembers = [normalizeMember(member), ...members.value]
     members.value = nextMembers
     void saveMembers(nextMembers)
   }
@@ -148,17 +226,28 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const isAdmin = computed(() => currentUser.value?.role === 'admin')
+  const currentWordGroups = computed(() => normalizeCustomWordGroups(currentUser.value || {}))
+  const activeCustomWords = computed(() =>
+    uniqueWords(
+      currentWordGroups.value
+        .filter((group) => group.enabled)
+        .flatMap((group) => group.words || [])
+    )
+  )
 
   return {
     members,
     currentUser,
     isAdmin,
+    currentWordGroups,
+    activeCustomWords,
     bootstrap,
     refreshMembers,
     loginByPassword,
     loginByWecomUuid,
     updateProfile,
     setCustomWords,
+    setCustomWordGroups,
     addMember,
     deleteMembers,
     logout

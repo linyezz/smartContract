@@ -17,7 +17,15 @@ const adminMember = {
   phone: '13800138000',
   avatar: '',
   loginType: 'password',
-  customWords: ['极易科技', '商业秘密', '内部报价']
+  customWords: ['极易科技', '商业秘密', '内部报价'],
+  customWordGroups: [
+    {
+      id: 'group-default',
+      name: '默认分组',
+      enabled: true,
+      words: ['极易科技', '商业秘密', '内部报价']
+    }
+  ]
 }
 
 const state = {

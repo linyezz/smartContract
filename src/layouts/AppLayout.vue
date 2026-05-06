@@ -2,12 +2,17 @@
   <div class="page-shell layout-shell">
     <header class="content-card topbar">
       <div>
-        <p class="topbar-brand">极易合同智能脱敏</p>
+        <div class="brand-lockup">
+          <img :src="appLogo" alt="极易合同智能脱敏" class="brand-logo" />
+          <p class="topbar-brand">极易合同智能脱敏</p>
+        </div>
       </div>
       <div class="topbar-actions">
         <RouterLink to="/" class="nav-link" :class="{ active: route.name === 'home' }">首页</RouterLink>
         <RouterLink to="/history" class="nav-link" :class="{ active: route.name === 'history' }">历史记录</RouterLink>
-        <RouterLink to="/profile" class="nav-link" :class="{ active: route.name === 'profile' }">个人中心</RouterLink>
+        <RouterLink to="/word-library" class="nav-link" :class="{ active: route.name === 'word-library' }">脱敏词库</RouterLink>
+        <!-- 个人中心入口暂时关闭：保留路由和页面，待个人资料功能重新开放时恢复此入口。 -->
+        <!-- <RouterLink to="/profile" class="nav-link" :class="{ active: route.name === 'profile' }">个人中心</RouterLink> -->
         <div class="user-chip">
           <div v-if="authStore.currentUser?.avatar" class="user-avatar-wrap">
             <img :src="authStore.currentUser.avatar" :alt="authStore.currentUser.name" class="user-avatar" />
@@ -29,6 +34,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../store/auth'
+import appLogo from '../assets/app-logo.png'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -56,6 +62,20 @@ const userInitial = computed(() => authStore.currentUser?.name?.slice(0, 1) || '
   font-size: 26px;
   font-weight: 800;
   letter-spacing: 0.02em;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(47, 111, 237, 0.18);
 }
 
 .topbar-actions {
