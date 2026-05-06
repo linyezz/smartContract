@@ -75,6 +75,13 @@ jobs:
             test -f src-tauri/binaries/rapidocr-worker
           fi
 
+      - name: Force NSIS Bundle On Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const path='src-tauri/tauri.conf.json'; const config=JSON.parse(fs.readFileSync(path,'utf8')); config.bundle={...(config.bundle||{}), targets:'nsis'}; fs.writeFileSync(path, JSON.stringify(config, null, 2));"
+          cat src-tauri/tauri.conf.json
+
       - name: Build With Tauri Action
         uses: tauri-apps/tauri-action@v0
         env:
