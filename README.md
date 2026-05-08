@@ -40,6 +40,8 @@
 - `mammoth`
 - `OCRmyPDF`（本机命令行工具，扫描 PDF OCR 兜底）
 - `RapidOCR worker`（本地 Python/sidecar OCR 主链路）
+- `OpenAI JS SDK`（大模型敏感信息识别）
+- `@tauri-apps/plugin-http`（桌面端原生 HTTP 请求，用于绕开浏览器 CORS）
 
 ## OCR 架构
 
@@ -95,6 +97,8 @@ smartContract/
   - 手机号/座机
   - 邮箱
   - 银行卡号
+  - 纳税人识别号
+  - 开户行
   - 统一社会信用代码
   - 公司名称
   - 姓名标签
@@ -202,6 +206,56 @@ node ./scripts/build-ocr-worker.mjs
 - 优先使用 `RapidOCR worker`
 - worker 不可用时回退到 `OCRmyPDF`
 - `OCRmyPDF` 成功后会尽量补充 PDF 文字层，便于后续预览和导出
+
+## 大模型脱敏识别
+
+大模型识别入口统一封装在 `src/utils/llmDesensitize.js`，调用方式仍然使用 `openai` 这个 JS SDK：
+
+```js
+const completion = await openai.chat.completions.create({
+  messages,
+  model,
+  thinking,
+  reasoning_effort,
+  stream: false
+})
+```
+
+桌面客户端运行在 Tauri 内时，会把 OpenAI SDK 的底层 `fetch` 替换为 `@tauri-apps/plugin-http` 提供的原生 HTTP `fetch`。这样请求仍然由 JS SDK 发起，但不会经过浏览器网络栈，因此本地 LLM 服务即使没有配置 CORS，也不会被浏览器跨域限制拦截。
+
+### 配置文件
+
+开发环境默认读取：
+
+```text
+public/llm-desensitize.config.json
+```
+
+可参考：
+
+```text
+public/llm-desensitize.config.example.json
+```
+
+示例：
+
+```json
+{
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:11434/v1",
+  "apiKey": "local-key",
+  "model": "deepseek-v4-pro",
+  "thinking": {
+    "type": "enabled"
+  },
+  "reasoningEffort": "high",
+  "timeoutSeconds": 60
+}
+```
+
+`baseUrl` 可以换成本地 OpenAI 兼容服务地址，例如 `http://127.0.0.1:11434/v1`、`http://localhost:8000/v1`。桌面端已经在 Tauri capability 中允许通过原生 HTTP 插件访问 `http` 和 `https` 地址，便于后续替换成本地模型服务。
+
+开发环境会在控制台输出 `[LLM脱敏识别]` 调试信息，包括请求参数、使用的 transport、OpenAI SDK 原始输出、`message.content` 和归一化实体结果。
 
 ## GitHub Actions 发布
 

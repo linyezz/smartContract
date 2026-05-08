@@ -28,6 +28,16 @@ const LABELED_BANK_CARD_PATTERN = new RegExp(
   `((?:${BANK_ACCOUNT_LABEL_SOURCE})\\s*(?:[：:]|为)?\\s*)((?:\\d[\\s\\u3000\\r\\n-]{0,4}){11,24}\\d)(?=(?:\\s*$|\\s*[，。,；;]|\\n\\s*(?:${BANK_CARD_SECTION_STOP_SOURCE})))`,
   'g'
 )
+const TAXPAYER_ID_LABEL_SOURCE = '纳税人识别号|纳税人识别码|税务登记号|税号'
+const LABELED_TAXPAYER_ID_PATTERN = new RegExp(
+  `((?:${TAXPAYER_ID_LABEL_SOURCE})\\s*(?:[：:]|为)?\\s*)([0-9A-Z]{15,20})(?![0-9A-Z])`,
+  'g'
+)
+const ACCOUNT_BANK_LABEL_SOURCE = '开户银行|开户行|收款银行|付款银行|开户网点|开户支行'
+const LABELED_ACCOUNT_BANK_PATTERN = new RegExp(
+  `((?:${ACCOUNT_BANK_LABEL_SOURCE})\\s*(?:[：:]|为)?\\s*)([\\u4e00-\\u9fa5A-Za-z0-9（）()·\\s]{4,80}?(?:银行|信用社|支行|分行|营业部|网点|合作社))(?![\\u4e00-\\u9fa5A-Za-z0-9])`,
+  'g'
+)
 const ADDRESS_BODY_SOURCE =
   '(?:[\\u4e00-\\u9fa5]{2,12}(?:省|市|自治区|特别行政区))?(?:[\\u4e00-\\u9fa5]{2,12}(?:市|州|盟))?(?:[\\u4e00-\\u9fa5]{2,12}(?:区|县|旗))?(?:[\\u4e00-\\u9fa5A-Za-z0-9]{2,24}(?:街道|大道|路|街|巷|镇|乡|村|里))[\\u4e00-\\u9fa5A-Za-z0-9号弄室层栋座单元园厦广场楼馆塔阁苑城店铺写字楼商场大厦\\-]{1,80}'
 const ADDRESS_HINT_PATTERN = /(?:省|市|自治区|特别行政区|州|盟|区|县|旗|街道|大道|路|街|巷|镇|乡|村|里|号|栋|座|层|室|单元|园|厦|广场|楼|塔|阁|苑|城|大厦|写字楼|商场|商店|中心|园区|公寓)/
@@ -98,6 +108,16 @@ const presetTypes = {
     label: '银行卡号',
     pattern: BANK_CARD_CANDIDATE_PATTERN,
     replacer: (value) => maskBankCardValue(value)
+  },
+  taxpayerId: {
+    label: '纳税人识别号',
+    pattern: LABELED_TAXPAYER_ID_PATTERN,
+    replacer: (value, prefix, taxId) => `${prefix}${maskSensitiveCode(taxId)}`
+  },
+  accountBank: {
+    label: '开户行',
+    pattern: LABELED_ACCOUNT_BANK_PATTERN,
+    replacer: (value, prefix, bankName) => `${prefix}${maskAccountBankName(bankName)}`
   },
   uscc: {
     label: '统一社会信用代码',
@@ -177,6 +197,25 @@ function maskBankCardValue(value) {
     digitIndex += 1
     return replacement || '*'
   })
+}
+
+function maskSensitiveCode(value) {
+  const normalized = String(value || '')
+  if (normalized.length <= 8) {
+    return '***'
+  }
+  return `${normalized.slice(0, 4)}${'*'.repeat(Math.max(normalized.length - 8, 1))}${normalized.slice(-4)}`
+}
+
+function maskAccountBankName(value) {
+  const normalized = String(value || '').replace(/\s+/g, '')
+  if (!normalized) {
+    return '***'
+  }
+  if (normalized.length <= 4) {
+    return `${normalized.slice(0, 1)}***`
+  }
+  return `${normalized.slice(0, 2)}${'*'.repeat(Math.max(normalized.length - 4, 1))}${normalized.slice(-2)}`
 }
 
 function isBankCardCandidate(value) {
@@ -658,6 +697,10 @@ function applySelectedSmartRules(sourceText, enabledTypes, hitList) {
         maskedText = applyNamedPersonRule(maskedText, hitList)
       } else if (type === 'bankCard') {
         maskedText = applyBankCardRule(maskedText, hitList)
+      } else if (type === 'taxpayerId') {
+        maskedText = applyRule(maskedText, rule, hitList)
+      } else if (type === 'accountBank') {
+        maskedText = applyRule(maskedText, rule, hitList)
       } else if (type === 'address') {
         maskedText = applyAddressRule(maskedText, hitList)
       } else if (type === 'price') {

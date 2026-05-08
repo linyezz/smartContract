@@ -13,9 +13,10 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
     "@html2canvas/html2canvas": "^1.6.3",
-    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/api": "2.10.1",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-fs": "^2.4.1",
+    "@tauri-apps/plugin-http": "2.5.8",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-store": "^2.4.0",
     "bankcard": "^3.1.6",

@@ -13,6 +13,8 @@ const TYPE_LABEL_MAP = {
   mobile: '手机号/座机',
   email: '邮箱',
   bankCard: '银行卡号',
+  taxpayerId: '纳税人识别号',
+  accountBank: '开户行',
   uscc: '统一社会信用代码',
   company: '公司名称',
   namedPerson: '姓名',
@@ -245,7 +247,16 @@ function normalizeEntityOverlaps(entities = []) {
 
 export async function detectPreciseChineseEntities(text, enabledTypes = []) {
   const targetTypes = enabledTypes.filter((type) => ['company', 'namedPerson', 'address'].includes(type))
+  debugNer('进入 detectPreciseChineseEntities', {
+    textLength: Array.from(text || '').length,
+    enabledTypes,
+    localTargetTypes: targetTypes
+  })
+
   if (!text?.trim() || !enabledTypes.length) {
+    debugNer('跳过外部实体识别', {
+      reason: !text?.trim() ? '文本为空' : '未启用任何脱敏类型'
+    })
     return []
   }
 
@@ -262,6 +273,10 @@ export async function detectPreciseChineseEntities(text, enabledTypes = []) {
   }
 
   try {
+    debugNer('准备调用大模型识别', {
+      textLength: Array.from(text || '').length,
+      enabledTypes
+    })
     const entities = await detectLlmSensitiveEntities(text, enabledTypes)
     debugNer('大模型原始实体', entities)
     llmEntities = await normalizeEntities(text, entities, enabledTypes)

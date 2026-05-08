@@ -1,49 +1,58 @@
 <template>
   <div class="pdf-preview-shell" :class="{ fullscreen: isFullscreen }">
-    <div v-if="showToolbar" class="pdf-toolbar">
-      <div class="pdf-toolbar-group">
-        <span class="zoom-label">缩放 {{ Math.round(zoom * 100) }}%</span>
+    <div class="pdf-compare" :class="{ 'masked-only': hideOriginalPreview }">
+      <div v-if="!hideOriginalPreview" class="pdf-panel">
+        <div class="panel-header">
+          <p class="preview-title">原文页面</p>
+          <div v-if="showToolbar" class="panel-toolbar">
+            <el-button size="small" plain @click="hideOriginalPreview = true">收起源文件</el-button>
+            <span class="zoom-label">缩放 {{ Math.round(originalZoom * 100) }}%</span>
+            <el-button size="small" @click="zoomOut('original')" :disabled="originalZoom <= minZoom">缩小</el-button>
+            <el-button size="small" @click="resetZoom('original')">重置</el-button>
+            <el-button size="small" type="primary" plain @click="zoomIn('original')" :disabled="originalZoom >= maxZoom">放大</el-button>
+          </div>
+        </div>
+        <div v-if="loading" class="pdf-state">页面加载中...</div>
+        <div v-else-if="error" class="pdf-state error">{{ error }}</div>
+        <div v-else class="pdf-pages">
+          <div v-for="page in originalPages" :key="`origin-${page.pageNumber}`" class="pdf-page-card">
+            <img
+              :src="page.originalDataUrl"
+              :alt="`原文第 ${page.pageNumber} 页`"
+              class="pdf-page-image"
+              :style="originalImageStyle"
+            />
+          </div>
+        </div>
       </div>
-      <div class="pdf-toolbar-group">
-        <el-button size="small" @click="zoomOut" :disabled="zoom <= minZoom">缩小</el-button>
-        <el-button size="small" @click="resetZoom">重置</el-button>
-        <el-button size="small" type="primary" plain @click="zoomIn" :disabled="zoom >= maxZoom">放大</el-button>
-      </div>
-    </div>
 
-    <div class="pdf-compare">
-    <div class="pdf-panel">
-      <p class="preview-title">原文页面</p>
-      <div v-if="loading" class="pdf-state">页面加载中...</div>
-      <div v-else-if="error" class="pdf-state error">{{ error }}</div>
-      <div v-else class="pdf-pages">
-        <div v-for="page in originalPages" :key="`origin-${page.pageNumber}`" class="pdf-page-card">
-          <img
-            :src="page.originalDataUrl"
-            :alt="`原文第 ${page.pageNumber} 页`"
-            class="pdf-page-image"
-            :style="imageStyle"
-          />
+      <div class="pdf-panel">
+        <div class="panel-header">
+          <p class="preview-title">{{ hideOriginalPreview ? '脱敏后页面 · 全宽预览' : '脱敏后页面' }}</p>
+          <div v-if="showToolbar" class="panel-toolbar">
+            <el-button size="small" plain @click="toggleOriginalPreview">
+              {{ hideOriginalPreview ? '显示源文件' : '收起源文件' }}
+            </el-button>
+            <span class="zoom-label">缩放 {{ Math.round(maskedZoom * 100) }}%</span>
+            <el-button size="small" @click="zoomOut('masked')" :disabled="maskedZoom <= minZoom">缩小</el-button>
+            <el-button size="small" @click="resetZoom('masked')">重置</el-button>
+            <el-button size="small" type="primary" plain @click="zoomIn('masked')" :disabled="maskedZoom >= maxZoom">放大</el-button>
+          </div>
+        </div>
+        <div v-if="loading" class="pdf-state">页面加载中...</div>
+        <div v-else-if="error" class="pdf-state error">{{ error }}</div>
+        <div v-else class="pdf-pages">
+          <div v-for="page in maskedPages" :key="`masked-${page.pageNumber}`" class="pdf-page-card">
+            <img
+              :src="page.maskedDataUrl"
+              :alt="`脱敏后第 ${page.pageNumber} 页`"
+              class="pdf-page-image"
+              :style="maskedImageStyle"
+            />
+          </div>
         </div>
       </div>
     </div>
-
-    <div class="pdf-panel">
-      <p class="preview-title">脱敏后页面</p>
-      <div v-if="loading" class="pdf-state">页面加载中...</div>
-      <div v-else-if="error" class="pdf-state error">{{ error }}</div>
-      <div v-else class="pdf-pages">
-        <div v-for="page in maskedPages" :key="`masked-${page.pageNumber}`" class="pdf-page-card">
-          <img
-            :src="page.maskedDataUrl"
-            :alt="`脱敏后第 ${page.pageNumber} 页`"
-            class="pdf-page-image"
-            :style="imageStyle"
-          />
-        </div>
-      </div>
-    </div>
-  </div>
   </div>
 </template>
 
@@ -94,26 +103,42 @@ const loading = ref(false)
 const error = ref('')
 const originalPages = ref([])
 const maskedPages = ref([])
-const zoom = ref(1)
+const originalZoom = ref(1)
+const maskedZoom = ref(1)
+const hideOriginalPreview = ref(false)
 const minZoom = 0.6
 const maxZoom = 2.4
 const zoomStep = 0.2
 
-const imageStyle = computed(() => ({
-  width: `${zoom.value * 100}%`,
+const originalImageStyle = computed(() => ({
+  width: `${originalZoom.value * 100}%`,
+  maxWidth: 'none'
+}))
+const maskedImageStyle = computed(() => ({
+  width: `${maskedZoom.value * 100}%`,
   maxWidth: 'none'
 }))
 
-function zoomIn() {
+function getZoomRef(target) {
+  return target === 'masked' ? maskedZoom : originalZoom
+}
+
+function zoomIn(target) {
+  const zoom = getZoomRef(target)
   zoom.value = Math.min(maxZoom, Number((zoom.value + zoomStep).toFixed(2)))
 }
 
-function zoomOut() {
+function zoomOut(target) {
+  const zoom = getZoomRef(target)
   zoom.value = Math.max(minZoom, Number((zoom.value - zoomStep).toFixed(2)))
 }
 
-function resetZoom() {
-  zoom.value = 1
+function resetZoom(target) {
+  getZoomRef(target).value = 1
+}
+
+function toggleOriginalPreview() {
+  hideOriginalPreview.value = !hideOriginalPreview.value
 }
 
 async function loadPreview() {
@@ -159,21 +184,20 @@ watch(
   gap: 12px;
 }
 
-.pdf-toolbar {
+.panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.92));
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 10px;
 }
 
-.pdf-toolbar-group {
+.panel-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .zoom-label {
@@ -185,6 +209,27 @@ watch(
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.pdf-compare.masked-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pdf-compare.masked-only .pdf-panel {
+  width: 100%;
+}
+
+.pdf-compare.masked-only .pdf-pages {
+  align-items: stretch;
+}
+
+.pdf-compare.masked-only .pdf-page-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pdf-compare.masked-only .pdf-page-image {
+  width: 100%;
 }
 
 .pdf-panel {

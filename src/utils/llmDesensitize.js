@@ -1,3 +1,4 @@
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import OpenAI from 'openai'
 
 const TYPE_LABEL_MAP = {
@@ -5,6 +6,8 @@ const TYPE_LABEL_MAP = {
   mobile: '手机号/座机',
   email: '邮箱',
   bankCard: '银行卡号',
+  taxpayerId: '纳税人识别号',
+  accountBank: '开户行',
   uscc: '统一社会信用代码',
   company: '公司名称',
   namedPerson: '姓名',
@@ -23,6 +26,40 @@ function debugLlmRecognition(stage, payload) {
   console.groupCollapsed(`[LLM脱敏识别] ${stage}`)
   console.log(payload)
   console.groupEnd()
+}
+
+function maskSecret(value) {
+  const raw = String(value || '')
+  if (!raw) {
+    return ''
+  }
+  return `${raw.slice(0, 6)}***${raw.slice(-4)}`
+}
+
+function buildDebugConfig(config) {
+  return {
+    enabled: Boolean(config?.enabled),
+    baseUrl: config?.baseUrl || '',
+    model: config?.model || '',
+    hasApiKey: Boolean(config?.apiKey),
+    apiKeyPreview: maskSecret(config?.apiKey),
+    thinking: config?.thinking,
+    reasoningEffort: config?.reasoningEffort,
+    timeoutSeconds: config?.timeoutSeconds
+  }
+}
+
+function buildDebugError(error) {
+  return {
+    name: error?.name || '',
+    message: error?.message || String(error),
+    status: error?.status,
+    code: error?.code,
+    type: error?.type,
+    headers: error?.headers,
+    cause: error?.cause,
+    stack: error?.stack
+  }
 }
 
 async function loadLlmDesensitizeConfig() {
@@ -47,12 +84,22 @@ async function loadLlmDesensitizeConfig() {
   return llmConfigPromise
 }
 
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__)
+}
+
 function createOpenAiClient(config) {
-  return new OpenAI({
+  const options = {
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
     dangerouslyAllowBrowser: true
-  })
+  }
+
+  if (isTauriRuntime()) {
+    options.fetch = tauriFetch
+  }
+
+  return new OpenAI(options)
 }
 
 function normalizeLlmType(value) {
@@ -68,6 +115,16 @@ function normalizeLlmType(value) {
     银行卡号: 'bankCard',
     银行账号: 'bankCard',
     账号: 'bankCard',
+    纳税人识别号: 'taxpayerId',
+    纳税人识别码: 'taxpayerId',
+    税务登记号: 'taxpayerId',
+    税号: 'taxpayerId',
+    开户行: 'accountBank',
+    开户银行: 'accountBank',
+    收款银行: 'accountBank',
+    付款银行: 'accountBank',
+    开户网点: 'accountBank',
+    开户支行: 'accountBank',
     统一社会信用代码: 'uscc',
     社会信用代码: 'uscc',
     公司名称: 'company',
@@ -107,6 +164,179 @@ function findEntitySpan(text, entityText) {
   }
 }
 
+function stripMarkdownJsonFence(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^```(?:json|JSON)?\s*/u, '')
+    .replace(/\s*```$/u, '')
+    .trim()
+}
+
+function removeTrailingJsonCommas(value) {
+  return String(value || '').replace(/,\s*([}\]])/gu, '$1')
+}
+
+function normalizePossiblyEscapedJson(value) {
+  const raw = String(value || '')
+  if (!raw.includes('"text"') && !raw.includes('"type"') && (raw.includes('\\"text\\"') || raw.includes('\\"type\\"'))) {
+    return raw.replace(/\\"/gu, '"')
+  }
+  return raw
+}
+
+function repairLlmJsonNumericFields(value) {
+  return String(value || '').replace(
+    /("(?:start|end)"\s*:\s*-?\d+)[^\r\n,}\]]*(?=,)/gu,
+    '$1'
+  )
+}
+
+function findBalancedJsonSlice(value) {
+  const raw = String(value || '')
+  const openers = new Set(['[', '{'])
+  const closerMap = {
+    '[': ']',
+    '{': '}'
+  }
+
+  for (let start = 0; start < raw.length; start += 1) {
+    const opener = raw[start]
+    if (!openers.has(opener)) {
+      continue
+    }
+
+    const stack = [closerMap[opener]]
+    let inString = false
+    let escaped = false
+
+    for (let index = start + 1; index < raw.length; index += 1) {
+      const char = raw[index]
+
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (char === '\\') {
+        escaped = true
+        continue
+      }
+      if (char === '"') {
+        inString = !inString
+        continue
+      }
+      if (inString) {
+        continue
+      }
+      if (openers.has(char)) {
+        stack.push(closerMap[char])
+        continue
+      }
+      if (char === stack[stack.length - 1]) {
+        stack.pop()
+        if (!stack.length) {
+          return raw.slice(start, index + 1)
+        }
+      }
+    }
+  }
+
+  return ''
+}
+
+function prepareLlmJsonText(value) {
+  return removeTrailingJsonCommas(
+    repairLlmJsonNumericFields(
+      normalizePossiblyEscapedJson(
+        stripMarkdownJsonFence(value)
+      )
+    )
+  )
+}
+
+function collectBalancedJsonObjects(value) {
+  const raw = String(value || '')
+  const objects = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]
+
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) {
+      continue
+    }
+    if (char === '{') {
+      if (depth === 0) {
+        start = index
+      }
+      depth += 1
+      continue
+    }
+    if (char === '}') {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        objects.push(raw.slice(start, index + 1))
+        start = -1
+      }
+    }
+  }
+
+  return objects
+}
+
+function parseLlmJsonObjectsFallback(value, originalError) {
+  const objectSlices = collectBalancedJsonObjects(value)
+  const parsedObjects = []
+  const errors = []
+
+  for (const objectSlice of objectSlices) {
+    try {
+      parsedObjects.push(JSON.parse(removeTrailingJsonCommas(objectSlice)))
+    } catch (error) {
+      errors.push({
+        error: buildDebugError(error),
+        objectSlice
+      })
+    }
+  }
+
+  if (parsedObjects.length) {
+    debugLlmRecognition('JSON 解析兜底：按对象片段恢复数组', {
+      originalError: buildDebugError(originalError),
+      totalObjectSlices: objectSlices.length,
+      recoveredCount: parsedObjects.length,
+      droppedCount: errors.length,
+      errors
+    })
+    return parsedObjects
+  }
+
+  throw originalError
+}
+
+function parseLlmJsonCandidate(value) {
+  const cleaned = prepareLlmJsonText(value)
+  try {
+    return JSON.parse(cleaned)
+  } catch (error) {
+    return parseLlmJsonObjectsFallback(cleaned, error)
+  }
+}
+
 function extractJsonFromLlmContent(content) {
   const raw = String(content || '').trim()
   if (!raw) {
@@ -114,18 +344,30 @@ function extractJsonFromLlmContent(content) {
   }
 
   try {
-    return JSON.parse(raw)
-  } catch {
-    const startCandidates = [raw.indexOf('['), raw.indexOf('{')].filter((index) => index >= 0)
-    const endCandidates = [raw.lastIndexOf(']'), raw.lastIndexOf('}')].filter((index) => index >= 0)
-    const start = Math.min(...startCandidates)
-    const end = Math.max(...endCandidates)
-
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return parseLlmJsonCandidate(raw)
+  } catch (directError) {
+    const preparedRaw = prepareLlmJsonText(raw)
+    const jsonSlice = findBalancedJsonSlice(preparedRaw)
+    if (!jsonSlice) {
+      debugLlmRecognition('JSON 解析失败：未找到完整 JSON 片段', {
+        error: buildDebugError(directError),
+        rawContent: raw,
+        preparedRaw
+      })
       throw new Error(`大模型返回内容中没有可解析 JSON：${raw}`)
     }
 
-    return JSON.parse(raw.slice(start, end + 1))
+    try {
+      return parseLlmJsonCandidate(jsonSlice)
+    } catch (sliceError) {
+      debugLlmRecognition('JSON 解析失败：完整片段解析失败', {
+        directError: buildDebugError(directError),
+        sliceError: buildDebugError(sliceError),
+        rawContent: raw,
+        jsonSlice
+      })
+      throw sliceError
+    }
   }
 }
 
@@ -134,7 +376,9 @@ function normalizeLlmEntityResponse(text, payload, enabledTypes) {
     ? payload
     : Array.isArray(payload?.entities)
       ? payload.entities
-      : []
+      : payload && typeof payload === 'object'
+        ? [payload]
+        : []
 
   return rawEntities
     .map((item) => {
@@ -175,7 +419,7 @@ function buildLlmMessages(text, enabledTypes = []) {
   return [
     {
       role: 'system',
-      content: '你是合同脱敏识别助手，只输出严格 JSON。识别身份证号、手机号/座机、邮箱、银行卡号、统一社会信用代码、公司名称、姓名、地址、价格等敏感信息。'
+      content: '你是合同脱敏识别助手，只输出严格 JSON。识别身份证号、手机号/座机、邮箱、银行卡号、纳税人识别号、开户行、统一社会信用代码、公司名称、姓名、地址、价格等敏感信息。'
     },
     {
       role: 'user',
@@ -185,13 +429,33 @@ function buildLlmMessages(text, enabledTypes = []) {
 }
 
 export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
+  debugLlmRecognition('进入 detectLlmSensitiveEntities', {
+    textLength: Array.from(text || '').length,
+    textPreview: String(text || '').slice(0, 500),
+    enabledTypes,
+    isTauriRuntime: isTauriRuntime(),
+    hasTauriInternals: typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__),
+    hasTauriGlobal: typeof window !== 'undefined' && Boolean(window.__TAURI__)
+  })
+
   const config = await loadLlmDesensitizeConfig()
+  debugLlmRecognition('配置读取成功', buildDebugConfig(config))
+
   if (!config?.enabled) {
-    debugLlmRecognition('跳过', '大模型配置未开启')
+    debugLlmRecognition('跳过', '大模型配置未开启 enabled=false')
     return []
   }
   if (!config.apiKey) {
+    debugLlmRecognition('跳过', '大模型配置缺少 apiKey')
     throw new Error('大模型配置缺少 apiKey')
+  }
+  if (!text?.trim()) {
+    debugLlmRecognition('跳过', '文本为空')
+    return []
+  }
+  if (!enabledTypes.length) {
+    debugLlmRecognition('跳过', '未启用任何脱敏类型')
+    return []
   }
 
   const client = createOpenAiClient(config)
@@ -205,10 +469,17 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
 
   debugLlmRecognition('OpenAI SDK 请求', {
     baseURL: config.baseUrl,
+    transport: isTauriRuntime() ? 'tauri-plugin-http' : 'browser-fetch',
     payload: requestPayload
   })
 
-  const completion = await client.chat.completions.create(requestPayload)
+  let completion
+  try {
+    completion = await client.chat.completions.create(requestPayload)
+  } catch (error) {
+    debugLlmRecognition('OpenAI SDK 调用报错', buildDebugError(error))
+    throw error
+  }
   debugLlmRecognition('OpenAI SDK 原始输出', completion)
 
   const content = completion.choices?.[0]?.message?.content || ''
