@@ -28,6 +28,10 @@ function debugLlmRecognition(stage, payload) {
   console.groupEnd()
 }
 
+function warnLlmRecognition(stage, payload) {
+  console.warn(`[LLM脱敏识别] ${stage}`, payload)
+}
+
 function maskSecret(value) {
   const raw = String(value || '')
   if (!raw) {
@@ -75,6 +79,7 @@ async function loadLlmDesensitizeConfig() {
       })
       .catch((error) => {
         debugLlmRecognition('配置读取失败', error)
+        warnLlmRecognition('配置读取失败，已跳过大模型识别', error)
         return {
           enabled: false
         }
@@ -443,10 +448,12 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
 
   if (!config?.enabled) {
     debugLlmRecognition('跳过', '大模型配置未开启 enabled=false')
+    warnLlmRecognition('跳过：大模型配置未开启', buildDebugConfig(config))
     return []
   }
   if (!config.apiKey) {
     debugLlmRecognition('跳过', '大模型配置缺少 apiKey')
+    warnLlmRecognition('跳过：大模型配置缺少 apiKey', buildDebugConfig(config))
     throw new Error('大模型配置缺少 apiKey')
   }
   if (!text?.trim()) {

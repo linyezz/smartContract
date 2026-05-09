@@ -257,6 +257,34 @@ public/llm-desensitize.config.example.json
 
 开发环境会在控制台输出 `[LLM脱敏识别]` 调试信息，包括请求参数、使用的 transport、OpenAI SDK 原始输出、`message.content` 和归一化实体结果。
 
+### GitHub Actions 打包配置
+
+真实配置文件 `public/llm-desensitize.config.json` 被 `.gitignore` 排除，不会提交到仓库。发布打包时，workflow 会通过 `scripts/write-llm-config.mjs` 根据 GitHub Secrets/Variables 生成配置文件，再执行 Tauri 打包。
+
+必须配置至少一个 GitHub Secret：
+
+```text
+LLM_DESENSITIZE_API_KEY
+```
+
+也兼容：
+
+```text
+DEEPSEEK_API_KEY
+```
+
+可选 GitHub Variables：
+
+```text
+LLM_DESENSITIZE_BASE_URL
+LLM_DESENSITIZE_MODEL
+LLM_DESENSITIZE_THINKING_TYPE
+LLM_DESENSITIZE_REASONING_EFFORT
+LLM_DESENSITIZE_TIMEOUT_SECONDS
+```
+
+如果发布环境缺少 API Key，workflow 会直接失败，避免打出一个不会调用大模型的安装包。
+
 ## GitHub Actions 发布
 
 项目已经预置 GitHub Actions 工作流：
