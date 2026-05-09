@@ -4,7 +4,7 @@
       <div>
         <div class="brand-lockup">
           <img :src="appLogo" alt="极易合同智能脱敏" class="brand-logo" />
-          <p class="topbar-brand">极易合同智能脱敏</p>
+          <p class="topbar-brand">极易合同智能脱敏V1.0</p>
         </div>
       </div>
       <div class="topbar-actions">
