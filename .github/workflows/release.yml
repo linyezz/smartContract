@@ -73,6 +73,12 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: node ./scripts/write-llm-config.mjs
 
+      - name: Verify LLM Config
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const config=JSON.parse(fs.readFileSync('public/llm-desensitize.config.json','utf8')); if(!config.enabled) throw new Error('LLM config is disabled'); if(!config.apiKey) throw new Error('LLM apiKey is missing'); console.log('[LLM脱敏识别] 发布配置校验通过', { baseUrl: config.baseUrl, model: config.model, hasApiKey: Boolean(config.apiKey) });"
+          test -f src-tauri/llm-desensitize.config.json
+
       - name: Setup RapidOCR Worker Environment
         run: node ./scripts/setup-ocr-worker.mjs
 

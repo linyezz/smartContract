@@ -28,6 +28,7 @@
     "active": true,
     "targets": "all",
     "resources": [
+      "llm-desensitize.config.json",
       "resources/ocr-worker/rapidocr_worker.py",
       "resources/ocr-worker/requirements.txt",
       "binaries"

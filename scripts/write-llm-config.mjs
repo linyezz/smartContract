@@ -19,7 +19,7 @@ if (requireApiKey && !apiKey) {
 
 const config = {
   enabled,
-  baseUrl: process.env.LLM_DESENSITIZE_BASE_URL || 'https://api.deepseek.com',
+  baseUrl: process.env.LLM_DESENSITIZE_BASE_URL || 'https://model-api.ecmax.cn/v1',
   apiKey,
   model: process.env.LLM_DESENSITIZE_MODEL || 'deepseek-v4-pro',
   thinking: {

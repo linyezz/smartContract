@@ -1,3 +1,5 @@
+import { resourceDir, join } from '@tauri-apps/api/path'
+import { readTextFile } from '@tauri-apps/plugin-fs'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import OpenAI from 'openai'
 
@@ -66,22 +68,50 @@ function buildDebugError(error) {
   }
 }
 
+async function loadLlmConfigFromPublicAsset() {
+  const response = await fetch('/llm-desensitize.config.json', {
+    cache: 'no-store'
+  })
+  if (!response.ok) {
+    throw new Error(`读取前端大模型配置失败：HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
+async function loadLlmConfigFromTauriResource() {
+  const resourcePath = await join(await resourceDir(), 'llm-desensitize.config.json')
+  const content = await readTextFile(resourcePath)
+  return JSON.parse(content)
+}
+
 async function loadLlmDesensitizeConfig() {
   if (!llmConfigPromise) {
-    llmConfigPromise = fetch('/llm-desensitize.config.json', {
-      cache: 'no-store'
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`读取大模型配置失败：HTTP ${response.status}`)
-        }
-        return response.json()
+    llmConfigPromise = loadLlmConfigFromPublicAsset()
+      .then((config) => {
+        debugLlmRecognition('配置读取成功：前端静态资源', buildDebugConfig(config))
+        return config
       })
-      .catch((error) => {
-        debugLlmRecognition('配置读取失败', error)
-        warnLlmRecognition('配置读取失败，已跳过大模型识别', error)
-        return {
-          enabled: false
+      .catch(async (assetError) => {
+        debugLlmRecognition('前端静态配置读取失败，尝试读取 Tauri 资源配置', buildDebugError(assetError))
+        if (!isTauriRuntime()) {
+          warnLlmRecognition('配置读取失败，已跳过大模型识别', buildDebugError(assetError))
+          return {
+            enabled: false
+          }
+        }
+
+        try {
+          const config = await loadLlmConfigFromTauriResource()
+          warnLlmRecognition('已从 Tauri 资源目录读取大模型配置', buildDebugConfig(config))
+          return config
+        } catch (resourceError) {
+          warnLlmRecognition('配置读取失败，已跳过大模型识别', {
+            assetError: buildDebugError(assetError),
+            resourceError: buildDebugError(resourceError)
+          })
+          return {
+            enabled: false
+          }
         }
       })
   }

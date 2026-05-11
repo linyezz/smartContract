@@ -259,7 +259,7 @@ public/llm-desensitize.config.example.json
 
 ### GitHub Actions 打包配置
 
-真实配置文件 `public/llm-desensitize.config.json` 被 `.gitignore` 排除，不会提交到仓库。发布打包时，workflow 会通过 `scripts/write-llm-config.mjs` 根据 GitHub Secrets/Variables 生成配置文件，再执行 Tauri 打包。
+真实配置文件 `public/llm-desensitize.config.json` 被 `.gitignore` 排除，不会提交到仓库。发布打包时，workflow 会通过 `scripts/write-llm-config.mjs` 根据 GitHub Secrets/Variables 生成配置文件，再执行 Tauri 打包。配置会同时写入前端静态资源和 Tauri resource，打包版会优先读取前端静态配置；如果自定义协议下读取失败，会回退到应用资源目录里的配置文件。
 
 必须配置至少一个 GitHub Secret：
 
@@ -281,6 +281,12 @@ LLM_DESENSITIZE_MODEL
 LLM_DESENSITIZE_THINKING_TYPE
 LLM_DESENSITIZE_REASONING_EFFORT
 LLM_DESENSITIZE_TIMEOUT_SECONDS
+```
+
+如果未配置 `LLM_DESENSITIZE_BASE_URL`，发布脚本默认使用：
+
+```text
+https://model-api.ecmax.cn/v1
 ```
 
 如果发布环境缺少 API Key，workflow 会直接失败，避免打出一个不会调用大模型的安装包。
