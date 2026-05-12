@@ -103,7 +103,7 @@
       <div class="stats-grid">
         <div class="stat-card">
           <span>敏感信息识别</span>
-          <strong>{{ result.hitList.length }}</strong>
+          <strong>{{ displayHitList.length }}</strong>
         </div>
         <div class="stat-card">
           <span>处理模式</span>
@@ -187,7 +187,16 @@
           </div>
         </div>
       </div>
-      <el-table v-if="currentFile" :data="result.hitList.slice(0, 20)" height="280" empty-text="暂无敏感信息识别记录">
+      <el-alert
+        v-if="pendingWhitelistWords.length"
+        class="pending-control-alert"
+        :title="`已标记 ${pendingWhitelistWords.length} 个不脱敏词，点击“开始脱敏”后生效。`"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
+
+      <el-table v-if="currentFile" :data="displayHitList.slice(0, 20)" height="280" empty-text="暂无敏感信息识别记录">
         <el-table-column prop="source" label="来源" width="110">
           <template #default="{ row }">
             {{ sourceLabelMap[row.source] || row.source || '-' }}
@@ -196,6 +205,28 @@
         <el-table-column prop="type" label="类别" width="120" />
         <el-table-column prop="original" label="原文" />
         <el-table-column prop="masked" label="脱敏后" />
+        <el-table-column label="操作" width="190" fixed="right">
+          <template #default="{ row }">
+            <el-space>
+              <el-button
+                link
+                type="primary"
+                :disabled="processing || isPendingWhitelist(row.original)"
+                @click="handleSkipMask(row)"
+              >
+                {{ isPendingWhitelist(row.original) ? '已标记' : '不脱敏' }}
+              </el-button>
+              <el-button
+                link
+                type="warning"
+                :disabled="processing || isPendingWhitelist(row.original)"
+                @click="handleAddWhitelist(row)"
+              >
+                加入白名单
+              </el-button>
+            </el-space>
+          </template>
+        </el-table-column>
       </el-table>
     </section>
   </div>
@@ -290,7 +321,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, FolderOpened } from '@element-plus/icons-vue'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useAuthStore } from '../store/auth'
@@ -351,6 +382,11 @@ const autoResult = reactive({
   maskedText: '',
   hitList: []
 })
+const autoDetectionCache = reactive({
+  signature: '',
+  entities: [],
+  ready: false
+})
 const debugError = ref('')
 const previewFullscreen = ref(false)
 const manualMaskVisible = ref(false)
@@ -360,11 +396,25 @@ const manualTextSelections = ref([])
 const manualPdfRegions = ref([])
 const manualDraftTextSelections = ref([])
 const manualDraftPdfRegions = ref([])
+const temporaryWhitelistWords = ref([])
+const pendingWhitelistWords = ref([])
 const autoArchiveExtensions = ['pdf', 'doc', 'docx', 'md']
 let unlistenNativeDragDrop = null
 
 const visibleWordGroups = computed(() => authStore.currentWordGroups)
 const activeCustomWords = computed(() => authStore.activeCustomWords)
+const activeWhitelistWords = computed(() => authStore.activeWhitelistWords)
+const activeOurEntityWords = computed(() => authStore.activeOurEntityWords)
+const effectiveWhitelistWords = computed(() =>
+  normalizeControlWords([
+    ...activeWhitelistWords.value,
+    ...temporaryWhitelistWords.value,
+    ...pendingWhitelistWords.value
+  ])
+)
+const displayHitList = computed(() =>
+  result.hitList.filter((item) => !isPendingWhitelist(item.original))
+)
 const allSmartTypesSelected = computed(() => form.enabledTypes.length === presetTypeOptions.length)
 const sourceLabelMap = {
   external: '外部识别',
@@ -471,6 +521,36 @@ const pdfAnalysisAlert = computed(() => {
   return null
 })
 
+function normalizeControlWords(words = []) {
+  return Array.from(
+    new Set(
+      words
+        .map((word) => String(word || '').trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => b.length - a.length)
+}
+
+function buildDetectionSignature(enabledTypes = []) {
+  if (!currentFile.value) {
+    return ''
+  }
+  return [
+    currentFile.value.path || currentFile.value.fileName || '',
+    Array.from(currentFile.value.text || '').length,
+    enabledTypes.slice().sort().join(',')
+  ].join('|')
+}
+
+function isControlWordMatch(value, words = []) {
+  const normalized = String(value || '').trim()
+  return Boolean(normalized) && words.includes(normalized)
+}
+
+function isPendingWhitelist(value) {
+  return isControlWordMatch(value, pendingWhitelistWords.value)
+}
+
 function resetManualMaskState() {
   manualTextSelections.value = []
   manualPdfRegions.value = []
@@ -482,6 +562,11 @@ function resetManualMaskState() {
 function resetAutoResultState() {
   autoResult.maskedText = ''
   autoResult.hitList = []
+  temporaryWhitelistWords.value = []
+  pendingWhitelistWords.value = []
+  autoDetectionCache.signature = ''
+  autoDetectionCache.entities = []
+  autoDetectionCache.ready = false
 }
 
 function resetResultState() {
@@ -552,7 +637,9 @@ function buildFinalManualResult(manualTextSelectionsToUse = [], manualPdfRegions
     enableSmart: false,
     enabledTypes: [],
     customWords: [],
-    externalEntities: buildManualTextEntities(manualTextSelectionsToUse)
+    externalEntities: buildManualTextEntities(manualTextSelectionsToUse),
+    whitelistWords: [],
+    ourEntityWords: activeOurEntityWords.value
   })
 
   return {
@@ -597,7 +684,7 @@ function recordTaskResult(maskedText, hitList, exportMeta = {}) {
   activeHistoryRecordId.value = record.id
 }
 
-async function ensureAutoPreviewReady(showMessage = false) {
+async function ensureAutoPreviewReady(showMessage = false, options = {}) {
   if (!currentFile.value) {
     ElMessage.warning('请先选择需要处理的合同文件')
     return false
@@ -620,8 +707,19 @@ async function ensureAutoPreviewReady(showMessage = false) {
 
     let externalEntities = []
     if (enabledTypesToUse.length) {
-      processingStage.value = 'ai'
-      externalEntities = await detectPreciseChineseEntities(currentFile.value.text, enabledTypesToUse)
+      const detectionSignature = buildDetectionSignature(enabledTypesToUse)
+      if (autoDetectionCache.ready && autoDetectionCache.signature === detectionSignature) {
+        externalEntities = autoDetectionCache.entities
+      } else {
+        processingStage.value = 'ai'
+        externalEntities = await detectPreciseChineseEntities(currentFile.value.text, enabledTypesToUse, {
+          whitelistWords: effectiveWhitelistWords.value,
+          ourEntityWords: activeOurEntityWords.value
+        })
+        autoDetectionCache.signature = detectionSignature
+        autoDetectionCache.entities = externalEntities
+        autoDetectionCache.ready = true
+      }
     }
 
     processingStage.value = 'masking'
@@ -630,7 +728,9 @@ async function ensureAutoPreviewReady(showMessage = false) {
       enableSmart: true,
       enabledTypes: enabledTypesToUse,
       customWords: customWordsToUse,
-      externalEntities
+      externalEntities,
+      whitelistWords: effectiveWhitelistWords.value,
+      ourEntityWords: activeOurEntityWords.value
     })
 
     autoResult.maskedText = response.maskedText
@@ -638,6 +738,7 @@ async function ensureAutoPreviewReady(showMessage = false) {
     applyPreviewResult(response.maskedText, response.hitList)
     manualTextSelections.value = []
     manualPdfRegions.value = []
+    pendingWhitelistWords.value = []
     let exportMeta = {}
     if (showMessage && autoArchiveExtensions.includes(currentFile.value.extension)) {
       exportMeta = await exportMaskedResultToArchive(
@@ -654,7 +755,9 @@ async function ensureAutoPreviewReady(showMessage = false) {
       )
       result.exportPath = exportMeta.absolutePath
     }
-    recordTaskResult(response.maskedText, response.hitList, exportMeta)
+    if (options.recordHistory !== false) {
+      recordTaskResult(response.maskedText, response.hitList, exportMeta)
+    }
 
     if (showMessage) {
       ElMessage.success(
@@ -675,6 +778,66 @@ async function ensureAutoPreviewReady(showMessage = false) {
     processing.value = false
     processingStage.value = ''
   }
+}
+
+function addTemporaryWhitelistWord(word) {
+  const normalized = String(word || '').trim()
+  if (!normalized) {
+    return false
+  }
+  temporaryWhitelistWords.value = normalizeControlWords([
+    normalized,
+    ...temporaryWhitelistWords.value
+  ])
+  return true
+}
+
+function addPendingWhitelistWord(word) {
+  const normalized = String(word || '').trim()
+  if (!normalized) {
+    return false
+  }
+  pendingWhitelistWords.value = normalizeControlWords([
+    normalized,
+    ...pendingWhitelistWords.value
+  ])
+  return true
+}
+
+function markWordAsNoMask(word) {
+  const added = addTemporaryWhitelistWord(word)
+  addPendingWhitelistWord(word)
+  return added
+}
+
+function handleSkipMask(row) {
+  if (!markWordAsNoMask(row?.original)) {
+    return
+  }
+  ElMessage.success('已标记为不脱敏，点击“开始脱敏”后生效')
+}
+
+async function handleAddWhitelist(row) {
+  const word = String(row?.original || '').trim()
+  if (!word || !authStore.currentUser?.id) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${word}」加入白名单吗？该词以后都不会脱敏。`,
+      '加入白名单',
+      {
+        confirmButtonText: '确认加入',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+  authStore.addWhitelistWord(authStore.currentUser.id, word)
+  markWordAsNoMask(word)
+  ElMessage.success('已加入白名单，点击“开始脱敏”后生效')
 }
 
 async function openManualMaskDialog() {
@@ -1188,6 +1351,10 @@ onBeforeUnmount(() => {
 
 .pdf-analysis-alert {
   margin-top: 14px;
+}
+
+.pending-control-alert {
+  margin-bottom: 14px;
 }
 
 .type-shortcut-row {

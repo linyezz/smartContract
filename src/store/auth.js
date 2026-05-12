@@ -21,6 +21,10 @@ function uniqueWords(words = []) {
   )
 }
 
+function normalizeWordList(words = []) {
+  return uniqueWords(words).filter((word) => word.length >= 1 && word.length <= 80)
+}
+
 function createDefaultWordGroup(words = []) {
   return {
     id: DEFAULT_WORD_GROUP_ID,
@@ -65,7 +69,9 @@ function normalizeMember(member = {}) {
   return {
     ...member,
     customWordGroups,
-    customWords: flattenCustomWordGroups(customWordGroups)
+    customWords: flattenCustomWordGroups(customWordGroups),
+    whitelistWords: normalizeWordList(member.whitelistWords || []),
+    ourEntityWords: normalizeWordList(member.ourEntityWords || [])
   }
 }
 
@@ -205,6 +211,23 @@ export const useAuthStore = defineStore('auth', () => {
     updateProfile({ id: userId, customWordGroups })
   }
 
+  function setWhitelistWords(userId, whitelistWords) {
+    updateProfile({ id: userId, whitelistWords: normalizeWordList(whitelistWords) })
+  }
+
+  function addWhitelistWord(userId, word) {
+    const normalized = String(word || '').trim()
+    if (!normalized) {
+      return
+    }
+    const user = members.value.find((item) => item.id === userId)
+    setWhitelistWords(userId, [normalized, ...(user?.whitelistWords || [])])
+  }
+
+  function setOurEntityWords(userId, ourEntityWords) {
+    updateProfile({ id: userId, ourEntityWords: normalizeWordList(ourEntityWords) })
+  }
+
   function addMember(member) {
     const nextMembers = [normalizeMember(member), ...members.value]
     members.value = nextMembers
@@ -234,6 +257,8 @@ export const useAuthStore = defineStore('auth', () => {
         .flatMap((group) => group.words || [])
     )
   )
+  const activeWhitelistWords = computed(() => normalizeWordList(currentUser.value?.whitelistWords || []))
+  const activeOurEntityWords = computed(() => normalizeWordList(currentUser.value?.ourEntityWords || []))
 
   return {
     members,
@@ -241,6 +266,8 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     currentWordGroups,
     activeCustomWords,
+    activeWhitelistWords,
+    activeOurEntityWords,
     bootstrap,
     refreshMembers,
     loginByPassword,
@@ -248,6 +275,9 @@ export const useAuthStore = defineStore('auth', () => {
     updateProfile,
     setCustomWords,
     setCustomWordGroups,
+    setWhitelistWords,
+    addWhitelistWord,
+    setOurEntityWords,
     addMember,
     deleteMembers,
     logout

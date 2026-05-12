@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
-import { maskAddress, maskChineseName } from './desensitize'
+import {
+  isWhitelistedValue,
+  maskAddress,
+  maskChineseName,
+  maskCompanyName,
+  normalizeControlWords,
+  resolveOurEntityReplacement
+} from './desensitize'
 import { detectLlmSensitiveEntities } from './llmDesensitize'
 
 const ADDRESS_LABEL_CONTEXT_PATTERN = /(?:注册地址|办公地址|联系地址|通讯地址|收货地址|交付地点|项目地址|送达地址|住所地|住\s*所|地\s*址)\s*(?:[：:]|为)?\s*$/
@@ -148,9 +155,26 @@ async function isAddressCandidate(text, entity) {
   return hasDetail && parsedScore >= 2 && candidate.length >= 6
 }
 
-async function mapEntityToMask(text, entity, enabledTypes) {
+async function mapEntityToMask(text, entity, enabledTypes, options = {}) {
   if (!entity?.text || (entity.source !== 'llm' && !enabledTypes.includes(entity.type))) {
     return null
+  }
+
+  const whitelistWords = options.whitelistWords || []
+  const ourEntityWords = options.ourEntityWords || []
+
+  if (isWhitelistedValue(entity.text, whitelistWords)) {
+    return null
+  }
+
+  if (entity.type === 'company') {
+    return {
+      start: entity.start,
+      end: entity.end,
+      type: '公司名称',
+      masked: resolveOurEntityReplacement(entity.text, ourEntityWords) || maskCompanyName(entity.text),
+      source: entity.source || 'external'
+    }
   }
 
   if (entity.masked) {
@@ -163,21 +187,13 @@ async function mapEntityToMask(text, entity, enabledTypes) {
     }
   }
 
-  if (entity.type === 'company') {
-    return {
-      start: entity.start,
-      end: entity.end,
-      type: '公司名称',
-      masked: '我司'
-    }
-  }
-
   if (entity.type === 'namedPerson') {
     return {
       start: entity.start,
       end: entity.end,
       type: '姓名',
-      masked: maskChineseName(entity.text)
+      masked: maskChineseName(entity.text),
+      source: entity.source || 'external'
     }
   }
 
@@ -191,19 +207,20 @@ async function mapEntityToMask(text, entity, enabledTypes) {
       start: expandedEntity.start,
       end: expandedEntity.end,
       type: '地址',
-      masked: maskAddress(expandedEntity.text.replace(/\s+/g, ''))
+      masked: maskAddress(expandedEntity.text.replace(/\s+/g, '')),
+      source: entity.source || 'external'
     }
   }
 
   return null
 }
 
-async function normalizeEntities(text, entities, enabledTypes) {
+async function normalizeEntities(text, entities, enabledTypes, options = {}) {
   const normalized = await Promise.all(
     (entities || []).map(async (item) => mapEntityToMask(text, {
       ...item,
       text: item.text || sliceByChars(text, item.start, item.end)
-    }, enabledTypes))
+    }, enabledTypes, options))
   )
 
   return normalized
@@ -245,12 +262,18 @@ function normalizeEntityOverlaps(entities = []) {
     }, [])
 }
 
-export async function detectPreciseChineseEntities(text, enabledTypes = []) {
+export async function detectPreciseChineseEntities(text, enabledTypes = [], options = {}) {
   const targetTypes = enabledTypes.filter((type) => ['company', 'namedPerson', 'address'].includes(type))
+  const entityOptions = {
+    whitelistWords: normalizeControlWords(options.whitelistWords || []),
+    ourEntityWords: normalizeControlWords(options.ourEntityWords || [])
+  }
   debugNer('进入 detectPreciseChineseEntities', {
     textLength: Array.from(text || '').length,
     enabledTypes,
-    localTargetTypes: targetTypes
+    localTargetTypes: targetTypes,
+    whitelistCount: entityOptions.whitelistWords.length,
+    ourEntityCount: entityOptions.ourEntityWords.length
   })
 
   if (!text?.trim() || !enabledTypes.length) {
@@ -266,7 +289,7 @@ export async function detectPreciseChineseEntities(text, enabledTypes = []) {
   try {
     if (targetTypes.length) {
       const entities = await invoke('detect_chinese_entities', { text })
-      localEntities = await normalizeEntities(text, entities, targetTypes)
+      localEntities = await normalizeEntities(text, entities, targetTypes, entityOptions)
     }
   } catch (error) {
     console.warn('detect_chinese_entities failed, fallback to JS rules only', error)
@@ -279,7 +302,7 @@ export async function detectPreciseChineseEntities(text, enabledTypes = []) {
     })
     const entities = await detectLlmSensitiveEntities(text, enabledTypes)
     debugNer('大模型原始实体', entities)
-    llmEntities = await normalizeEntities(text, entities, enabledTypes)
+    llmEntities = await normalizeEntities(text, entities, enabledTypes, entityOptions)
     debugNer('大模型归一化实体', llmEntities)
   } catch (error) {
     debugNer('大模型实体归一化失败', error)

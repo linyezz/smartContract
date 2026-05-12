@@ -89,6 +89,54 @@
         <el-empty v-else description="当前分组暂无脱敏词" />
       </div>
 
+      <div class="word-section">
+        <div class="word-section-head">
+          <p class="word-title">白名单</p>
+          <el-tag type="info">{{ whitelistWords.length }} 个词</el-tag>
+        </div>
+        <div class="word-toolbar">
+          <el-input v-model="whitelistInput" placeholder="输入不需要脱敏的词" @keyup.enter="addWhitelistWord" />
+          <el-button type="primary" @click="addWhitelistWord">添加</el-button>
+        </div>
+        <div v-if="whitelistWords.length" class="word-list control-word-list">
+          <el-tag
+            v-for="word in whitelistWords"
+            :key="word"
+            closable
+            size="large"
+            type="info"
+            @close.prevent="removeWhitelistWord(word)"
+          >
+            {{ word }}
+          </el-tag>
+        </div>
+        <el-empty v-else description="暂无白名单词" />
+      </div>
+
+      <div class="word-section">
+        <div class="word-section-head">
+          <p class="word-title">我司实体</p>
+          <el-tag type="success">{{ ourEntityWords.length }} 个词</el-tag>
+        </div>
+        <div class="word-toolbar">
+          <el-input v-model="ourEntityInput" placeholder="输入我司实体名称" @keyup.enter="addOurEntityWord" />
+          <el-button type="primary" @click="addOurEntityWord">添加</el-button>
+        </div>
+        <div v-if="ourEntityWords.length" class="word-list control-word-list">
+          <el-tag
+            v-for="word in ourEntityWords"
+            :key="word"
+            closable
+            size="large"
+            type="success"
+            @close.prevent="removeOurEntityWord(word)"
+          >
+            {{ word }}
+          </el-tag>
+        </div>
+        <el-empty v-else description="暂无我司实体" />
+      </div>
+
       <div v-if="authStore.isAdmin" class="word-section">
         <p class="word-title">全员词库概览</p>
         <div class="all-words">
@@ -130,8 +178,12 @@ const selectedGroupId = ref(DEFAULT_GROUP_ID)
 const importGroupId = ref(DEFAULT_GROUP_ID)
 const groupInput = ref('')
 const wordInput = ref('')
+const whitelistInput = ref('')
+const ourEntityInput = ref('')
 
 const wordGroups = computed(() => authStore.currentWordGroups)
+const whitelistWords = computed(() => authStore.activeWhitelistWords)
+const ourEntityWords = computed(() => authStore.activeOurEntityWords)
 const selectedGroup = computed(() =>
   wordGroups.value.find((group) => group.id === selectedGroupId.value) ||
   wordGroups.value.find((group) => group.id === DEFAULT_GROUP_ID) ||
@@ -155,12 +207,14 @@ watch(
   { immediate: true }
 )
 
-function normalizeWords(words = []) {
+function normalizeWords(words = [], options = {}) {
+  const minLength = options.minLength ?? 2
+  const maxLength = options.maxLength ?? 40
   return Array.from(
     new Set(
       words
         .map((word) => String(word || '').trim())
-        .filter((word) => word.length >= 2 && word.length <= 40)
+        .filter((word) => word.length >= minLength && word.length <= maxLength)
     )
   )
 }
@@ -174,6 +228,26 @@ function saveGroups(groups) {
     return
   }
   authStore.setCustomWordGroups(authStore.currentUser.id, groups)
+}
+
+function saveWhitelistWords(words) {
+  if (!authStore.currentUser?.id) {
+    return
+  }
+  authStore.setWhitelistWords(
+    authStore.currentUser.id,
+    normalizeWords(words, { minLength: 1, maxLength: 80 })
+  )
+}
+
+function saveOurEntityWords(words) {
+  if (!authStore.currentUser?.id) {
+    return
+  }
+  authStore.setOurEntityWords(
+    authStore.currentUser.id,
+    normalizeWords(words, { minLength: 1, maxLength: 80 })
+  )
 }
 
 function updateGroup(groupId, patch) {
@@ -260,6 +334,26 @@ function addWord() {
   ElMessage.success('已添加脱敏词')
 }
 
+function addWhitelistWord() {
+  const nextWord = whitelistInput.value.trim()
+  if (!nextWord) {
+    return
+  }
+  saveWhitelistWords([nextWord, ...whitelistWords.value])
+  whitelistInput.value = ''
+  ElMessage.success('已添加白名单词')
+}
+
+function addOurEntityWord() {
+  const nextWord = ourEntityInput.value.trim()
+  if (!nextWord) {
+    return
+  }
+  saveOurEntityWords([nextWord, ...ourEntityWords.value])
+  ourEntityInput.value = ''
+  ElMessage.success('已添加我司实体')
+}
+
 async function importWords() {
   try {
     const path = await pickFileByExtensions(WORD_LIBRARY_FILE_TYPES)
@@ -301,6 +395,16 @@ function removeWord(word) {
     words: selectedGroupWords.value.filter((item) => item !== word)
   })
   ElMessage.success('已删除脱敏词')
+}
+
+function removeWhitelistWord(word) {
+  saveWhitelistWords(whitelistWords.value.filter((item) => item !== word))
+  ElMessage.success('已删除白名单词')
+}
+
+function removeOurEntityWord(word) {
+  saveOurEntityWords(ourEntityWords.value.filter((item) => item !== word))
+  ElMessage.success('已删除我司实体')
 }
 
 async function pickFileByExtensions(extensions) {
@@ -405,6 +509,10 @@ async function pickFileByExtensions(extensions) {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.control-word-list {
+  margin-top: 14px;
 }
 
 .word-list.compact {

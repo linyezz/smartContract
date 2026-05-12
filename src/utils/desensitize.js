@@ -127,7 +127,7 @@ const presetTypes = {
   company: {
     label: '公司名称',
     pattern: COMPANY_PATTERN,
-    replacer: () => '我司'
+    replacer: (value) => maskCompanyName(value)
   },
   namedPerson: {
     label: '姓名',
@@ -144,6 +144,43 @@ const presetTypes = {
     pattern: UNIT_PRICE_PATTERN,
     replacer: (value) => maskPriceValue(value)
   }
+}
+
+export function normalizeControlWords(words = []) {
+  return Array.from(
+    new Set(
+      words
+        .map((word) => String(word || '').trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => b.length - a.length)
+}
+
+export function isWhitelistedValue(value, whitelistWords = []) {
+  const normalized = String(value || '').trim()
+  return Boolean(normalized) && whitelistWords.includes(normalized)
+}
+
+export function resolveOurEntityReplacement(value, ourEntityWords = []) {
+  const normalized = String(value || '').replace(/\s+/g, '')
+  if (!normalized) {
+    return ''
+  }
+  return ourEntityWords.some((word) => {
+    const entityWord = String(word || '').replace(/\s+/g, '')
+    return entityWord && (normalized === entityWord || normalized.includes(entityWord))
+  })
+    ? '我司'
+    : ''
+}
+
+export function maskCompanyName(value) {
+  const normalized = String(value || '')
+  const visibleChars = Array.from(normalized).filter((char) => !/\s/.test(char))
+  if (visibleChars.length <= 2) {
+    return '***'
+  }
+  return '*'.repeat(Math.min(Math.max(visibleChars.length, 3), 12))
 }
 
 export function maskChineseName(value) {
@@ -314,10 +351,17 @@ export const presetTypeOptions = Object.entries(presetTypes).map(([value, item])
   label: item.label
 }))
 
-function applyRule(sourceText, rule, hitList, source = 'regex') {
+function applyRule(sourceText, rule, hitList, source = 'regex', options = {}) {
+  const whitelistWords = options.whitelistWords || []
+  const ourEntityWords = options.ourEntityWords || []
   return sourceText.replace(rule.pattern, (...args) => {
     const value = args[0]
-    const masked = rule.replacer(...args)
+    if (isWhitelistedValue(value, whitelistWords)) {
+      return value
+    }
+    const masked = rule.label === '公司名称'
+      ? resolveOurEntityReplacement(value, ourEntityWords) || rule.replacer(...args)
+      : rule.replacer(...args)
     if (value !== masked) {
       hitList.push({
         source,
@@ -330,10 +374,17 @@ function applyRule(sourceText, rule, hitList, source = 'regex') {
   })
 }
 
-function applyRegex(sourceText, pattern, label, replacer, hitList, source = 'regex') {
+function applyRegex(sourceText, pattern, label, replacer, hitList, source = 'regex', options = {}) {
+  const whitelistWords = options.whitelistWords || []
+  const ourEntityWords = options.ourEntityWords || []
   return sourceText.replace(pattern, (...args) => {
     const value = args[0]
-    const masked = replacer(...args)
+    if (isWhitelistedValue(value, whitelistWords)) {
+      return value
+    }
+    const masked = label === '公司名称'
+      ? resolveOurEntityReplacement(value, ourEntityWords) || replacer(...args)
+      : replacer(...args)
     if (value !== masked) {
       hitList.push({
         source,
@@ -346,17 +397,19 @@ function applyRegex(sourceText, pattern, label, replacer, hitList, source = 'reg
   })
 }
 
-function applyCompanyRule(sourceText, hitList) {
-  return applyRegex(sourceText, COMPANY_PATTERN, '公司名称', () => '我司', hitList)
+function applyCompanyRule(sourceText, hitList, options = {}) {
+  return applyRegex(sourceText, COMPANY_PATTERN, '公司名称', (value) => maskCompanyName(value), hitList, 'regex', options)
 }
 
-function applyNamedPersonRule(sourceText, hitList) {
+function applyNamedPersonRule(sourceText, hitList, options = {}) {
   let nextText = applyRegex(
     sourceText,
     LABELED_NAME_PATTERN,
     '姓名',
     (value, prefix, name) => `${prefix}${maskChineseName(name)}`,
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -364,11 +417,13 @@ function applyNamedPersonRule(sourceText, hitList) {
     HONORIFIC_NAME_PATTERN,
     '姓名',
     (value) => maskChineseName(value),
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
-  nextText = applyDictionaryNameRule(nextText, hitList)
-  nextText = applySurnameAnchorRule(nextText, hitList)
+  nextText = applyDictionaryNameRule(nextText, hitList, options)
+  nextText = applySurnameAnchorRule(nextText, hitList, options)
 
   return nextText
 }
@@ -380,7 +435,7 @@ function applyNamedPersonRule(sourceText, hitList) {
  *   - 3-4 字命中：直接接受（3-4 字中文片段极少嵌入到普通词组中）
  *   - 2 字命中：要求左侧或右侧至少一侧不是中文（处于词边界），避免命中长姓名/词组中的同名片段
  */
-function applyDictionaryNameRule(sourceText, hitList) {
+function applyDictionaryNameRule(sourceText, hitList, options = {}) {
   if (!sourceText || NAME_DICTIONARY.size === 0) {
     return sourceText
   }
@@ -418,6 +473,11 @@ function applyDictionaryNameRule(sourceText, hitList) {
       break
     }
     if (matched) {
+      if (isWhitelistedValue(matched.value, options.whitelistWords || [])) {
+        out.push(matched.value)
+        i += matched.size
+        continue
+      }
       const masked = maskChineseName(matched.value)
       hitList.push({
         source: 'dictionary',
@@ -435,7 +495,7 @@ function applyDictionaryNameRule(sourceText, hitList) {
   return out.join('')
 }
 
-function applySurnameAnchorRule(sourceText, hitList) {
+function applySurnameAnchorRule(sourceText, hitList, options = {}) {
   if (!sourceText) return sourceText
   const entities = extractSurnameAnchorEntities(sourceText)
   if (!entities.length) return sourceText
@@ -444,6 +504,7 @@ function applySurnameAnchorRule(sourceText, hitList) {
   for (const item of sorted) {
     const original = result.slice(item.start, item.end)
     if (!original) continue
+    if (isWhitelistedValue(original, options.whitelistWords || [])) continue
     const masked = maskChineseName(original)
     result = result.slice(0, item.start) + masked + result.slice(item.end)
     hitList.push({
@@ -456,7 +517,7 @@ function applySurnameAnchorRule(sourceText, hitList) {
   return result
 }
 
-function applyBankCardRule(sourceText, hitList) {
+function applyBankCardRule(sourceText, hitList, options = {}) {
   let nextText = applyRegex(
     sourceText,
     LABELED_BANK_CARD_PATTERN,
@@ -467,7 +528,9 @@ function applyBankCardRule(sourceText, hitList) {
       }
       return `${prefix}${maskBankCardValue(accountNumber)}`
     },
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -480,13 +543,15 @@ function applyBankCardRule(sourceText, hitList) {
       }
       return maskBankCardValue(value)
     },
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   return nextText
 }
 
-function applyAddressRule(sourceText, hitList) {
+function applyAddressRule(sourceText, hitList, options = {}) {
   let nextText = applyRegex(
     sourceText,
     LABELED_MULTILINE_ADDRESS_PATTERN,
@@ -498,7 +563,9 @@ function applyAddressRule(sourceText, hitList) {
       }
       return `${prefix}${maskAddress(candidate.replace(/\s+/g, ''))}`
     },
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -506,7 +573,9 @@ function applyAddressRule(sourceText, hitList) {
     LABELED_ADDRESS_PATTERN,
     '地址',
     (value, prefix, address) => `${prefix}${maskAddress(address)}`,
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -520,10 +589,12 @@ function applyAddressRule(sourceText, hitList) {
       }
       return maskAddress(candidate.replace(/\s+/g, ''))
     },
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
-  nextText = applyRegex(nextText, ADDRESS_BOUNDARY_PATTERN, '地址', (value) => maskAddress(value), hitList)
+  nextText = applyRegex(nextText, ADDRESS_BOUNDARY_PATTERN, '地址', (value) => maskAddress(value), hitList, 'regex', options)
   return nextText
 }
 
@@ -549,7 +620,7 @@ function maskTrailingPriceTokens(line) {
   return nextLine
 }
 
-function applyTablePriceRule(sourceText, hitList) {
+function applyTablePriceRule(sourceText, hitList, options = {}) {
   const lines = sourceText.split('\n')
   let tableMode = false
 
@@ -576,6 +647,9 @@ function applyTablePriceRule(sourceText, hitList) {
     }
 
     if (/^\d+\s+/.test(trimmed)) {
+      if (isWhitelistedValue(line, options.whitelistWords || [])) {
+        return line
+      }
       const masked = maskTrailingPriceTokens(line)
       if (masked !== line) {
         hitList.push({
@@ -593,15 +667,17 @@ function applyTablePriceRule(sourceText, hitList) {
   return nextLines.join('\n')
 }
 
-function applyPriceRule(sourceText, hitList) {
-  let nextText = applyTablePriceRule(sourceText, hitList)
+function applyPriceRule(sourceText, hitList, options = {}) {
+  let nextText = applyTablePriceRule(sourceText, hitList, options)
 
   nextText = applyRegex(
     nextText,
     INLINE_TABLE_PRICE_PATTERN,
     '价格',
     (value, unitPrefix, unitValue, totalPrefix, totalValue) => `${unitPrefix}***${totalPrefix}***`,
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -610,7 +686,9 @@ function applyPriceRule(sourceText, hitList) {
     '价格',
     (value, leftPrefix = '', leftInteger = '', leftDecimal = '', separator = '-', rightPrefix = '', rightInteger = '', rightDecimal = '', suffix = '') =>
       `${leftPrefix}***${separator}${rightPrefix || ''}***${suffix}`,
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(
@@ -619,7 +697,9 @@ function applyPriceRule(sourceText, hitList) {
     '价格',
     (value, prefix, currencyPrefix = '', integerPart, decimalPart = '', suffix = '') =>
       `${prefix}${currencyPrefix || ''}***${suffix}`,
-    hitList
+    hitList,
+    'regex',
+    options
   )
 
   nextText = applyRegex(nextText, CHINESE_PRICE_PATTERN, '价格', (value, prefix, amount) => {
@@ -628,7 +708,7 @@ function applyPriceRule(sourceText, hitList) {
       return `${prefix}***`
     }
     return `${prefix}***${unitMatch[1]}${unitMatch[2]}`
-  }, hitList)
+  }, hitList, 'regex', options)
 
   nextText = applyRegex(nextText, STANDALONE_CHINESE_PRICE_PATTERN, '价格', (value, amount) => {
     const unitMatch = amount.match(/(元|圆)([零壹贰叁肆伍陆柒捌玖拾佰仟万亿兆角分整\s]*)$/)
@@ -636,10 +716,10 @@ function applyPriceRule(sourceText, hitList) {
       return '***'
     }
     return `***${unitMatch[1]}${unitMatch[2]}`
-  }, hitList)
+  }, hitList, 'regex', options)
 
-  nextText = applyRegex(nextText, CURRENCY_PRICE_PATTERN, '价格', (value) => maskPriceValue(value), hitList)
-  nextText = applyRegex(nextText, UNIT_PRICE_PATTERN, '价格', (value) => maskPriceValue(value), hitList)
+  nextText = applyRegex(nextText, CURRENCY_PRICE_PATTERN, '价格', (value) => maskPriceValue(value), hitList, 'regex', options)
+  nextText = applyRegex(nextText, UNIT_PRICE_PATTERN, '价格', (value) => maskPriceValue(value), hitList, 'regex', options)
   return nextText
 }
 
@@ -661,9 +741,11 @@ function normalizeExternalEntities(entities = []) {
     }, [])
 }
 
-function applyExternalEntities(sourceText, entities = [], hitList) {
+function applyExternalEntities(sourceText, entities = [], hitList, options = {}) {
   const chars = Array.from(sourceText)
   const replacements = normalizeExternalEntities(entities)
+  const whitelistWords = options.whitelistWords || []
+  const ourEntityWords = options.ourEntityWords || []
 
   replacements
     .slice()
@@ -673,40 +755,46 @@ function applyExternalEntities(sourceText, entities = [], hitList) {
       if (!original) {
         return
       }
-      chars.splice(item.start, item.end - item.start, item.masked)
+      if (isWhitelistedValue(original, whitelistWords)) {
+        return
+      }
+      const masked = item.type === '公司名称'
+        ? resolveOurEntityReplacement(original, ourEntityWords) || maskCompanyName(original)
+        : item.masked
+      chars.splice(item.start, item.end - item.start, masked)
       hitList.push({
         source: item.source || 'external',
         type: item.type,
         original,
-        masked: item.masked
+        masked
       })
     })
 
   return chars.join('')
 }
 
-function applySelectedSmartRules(sourceText, enabledTypes, hitList) {
+function applySelectedSmartRules(sourceText, enabledTypes, hitList, options = {}) {
   let maskedText = sourceText
 
   enabledTypes.forEach((type) => {
     const rule = presetTypes[type]
     if (rule) {
       if (type === 'company') {
-        maskedText = applyCompanyRule(maskedText, hitList)
+        maskedText = applyCompanyRule(maskedText, hitList, options)
       } else if (type === 'namedPerson') {
-        maskedText = applyNamedPersonRule(maskedText, hitList)
+        maskedText = applyNamedPersonRule(maskedText, hitList, options)
       } else if (type === 'bankCard') {
-        maskedText = applyBankCardRule(maskedText, hitList)
+        maskedText = applyBankCardRule(maskedText, hitList, options)
       } else if (type === 'taxpayerId') {
-        maskedText = applyRule(maskedText, rule, hitList)
+        maskedText = applyRule(maskedText, rule, hitList, 'regex', options)
       } else if (type === 'accountBank') {
-        maskedText = applyRule(maskedText, rule, hitList)
+        maskedText = applyRule(maskedText, rule, hitList, 'regex', options)
       } else if (type === 'address') {
-        maskedText = applyAddressRule(maskedText, hitList)
+        maskedText = applyAddressRule(maskedText, hitList, options)
       } else if (type === 'price') {
-        maskedText = applyPriceRule(maskedText, hitList)
+        maskedText = applyPriceRule(maskedText, hitList, options)
       } else {
-        maskedText = applyRule(maskedText, rule, hitList)
+        maskedText = applyRule(maskedText, rule, hitList, 'regex', options)
       }
     }
   })
@@ -726,8 +814,9 @@ function dedupeHitList(hitList) {
   })
 }
 
-export function maskCustomWords(text, words = [], hitList) {
+export function maskCustomWords(text, words = [], hitList, options = {}) {
   let result = text
+  const whitelistWords = options.whitelistWords || []
   words
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)
@@ -735,6 +824,9 @@ export function maskCustomWords(text, words = [], hitList) {
       const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const pattern = new RegExp(escaped, 'g')
       result = result.replace(pattern, (value) => {
+        if (isWhitelistedValue(value, whitelistWords)) {
+          return value
+        }
         hitList.push({
           source: 'custom',
           type: '自定义词',
@@ -752,20 +844,26 @@ export function desensitizeText({
   enableSmart,
   enabledTypes,
   customWords,
-  externalEntities = []
+  externalEntities = [],
+  whitelistWords = [],
+  ourEntityWords = []
 }) {
   const hitList = []
   let maskedText = text
+  const options = {
+    whitelistWords: normalizeControlWords(whitelistWords),
+    ourEntityWords: normalizeControlWords(ourEntityWords)
+  }
 
   if (externalEntities.length) {
-    maskedText = applyExternalEntities(maskedText, externalEntities, hitList)
+    maskedText = applyExternalEntities(maskedText, externalEntities, hitList, options)
   }
 
   if (enableSmart) {
-    maskedText = applySelectedSmartRules(maskedText, enabledTypes, hitList)
+    maskedText = applySelectedSmartRules(maskedText, enabledTypes, hitList, options)
   }
 
-  maskedText = maskCustomWords(maskedText, customWords, hitList)
+  maskedText = maskCustomWords(maskedText, customWords, hitList, options)
 
   return {
     maskedText,
