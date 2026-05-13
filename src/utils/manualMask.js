@@ -117,6 +117,8 @@ export function dedupeManualHitList(items = []) {
       masked: item?.masked,
       target: item?.target,
       pageNumber: item?.pageNumber,
+      area: item?.area,
+      sectionPath: item?.sectionPath,
       rect: item?.rect,
       start: item?.start,
       end: item?.end

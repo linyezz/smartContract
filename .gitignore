@@ -8,3 +8,4 @@ src-tauri/binaries/rapidocr-worker
 src-tauri/binaries/rapidocr-worker.exe
 src-tauri/llm-desensitize.config.json
 public/llm-desensitize.config.json
+artifacts/

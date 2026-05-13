@@ -1,4 +1,5 @@
 import mammoth from 'mammoth'
+import JSZip from 'jszip'
 import { invoke } from '@tauri-apps/api/core'
 import { readFile, writeFile } from '@tauri-apps/plugin-fs'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -92,6 +93,50 @@ async function extractDocxText(bytes) {
   return result.value
 }
 
+function collectDocxXmlText(xmlText) {
+  const parser = new DOMParser()
+  const xmlDocument = parser.parseFromString(xmlText, 'application/xml')
+  if (xmlDocument.getElementsByTagName('parsererror').length) {
+    return ''
+  }
+  const nodes = [
+    ...Array.from(xmlDocument.getElementsByTagName('w:t')),
+    ...Array.from(xmlDocument.getElementsByTagNameNS('*', 't'))
+  ]
+  return [...new Set(nodes)]
+    .map((node) => node.textContent || '')
+    .join('')
+    .trim()
+}
+
+async function extractDocxHeaderFooterSections(bytes) {
+  const zip = await JSZip.loadAsync(cloneUint8Array(bytes))
+  const sectionPaths = Object.keys(zip.files)
+    .filter((path) => /^word\/(?:header|footer)\d*\.xml$/i.test(path))
+    .sort()
+  const sections = []
+
+  for (const path of sectionPaths) {
+    const file = zip.file(path)
+    if (!file) {
+      continue
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const xmlText = await file.async('string')
+    const text = collectDocxXmlText(xmlText)
+    if (!text) {
+      continue
+    }
+    sections.push({
+      area: /^word\/header/i.test(path) ? '页眉' : '页脚',
+      path,
+      text
+    })
+  }
+
+  return sections
+}
+
 async function extractLegacyDocText(payload, bytes) {
   try {
     const text = await invoke('extract_legacy_doc_text', {
@@ -137,6 +182,16 @@ export async function readContractFile(fileSource) {
     }
   } else if (extension === 'docx') {
     text = await extractDocxText(cloneUint8Array(bytes))
+    const headerFooterSections = await extractDocxHeaderFooterSections(cloneUint8Array(bytes))
+    analysis = headerFooterSections.length
+      ? {
+          type: 'docx',
+          headerFooterSections,
+          headerFooterText: headerFooterSections
+            .map((section) => `${section.area}\n${section.text}`)
+            .join('\n\n')
+        }
+      : null
   } else if (extension === 'md') {
     text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
   } else if (extension === 'doc') {

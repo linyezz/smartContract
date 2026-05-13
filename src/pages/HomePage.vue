@@ -50,6 +50,11 @@
         <el-radio-button label="custom">自定义脱敏</el-radio-button>
       </el-radio-group>
 
+      <div class="option-row">
+        <span>页眉页脚脱敏</span>
+        <el-switch v-model="form.enableHeaderFooterMask" />
+      </div>
+
       <el-form v-if="form.mode === 'custom'" label-position="top">
         <el-form-item label="智能脱敏类别">
           <div class="type-shortcut-row">
@@ -200,6 +205,11 @@
         <el-table-column prop="source" label="来源" width="110">
           <template #default="{ row }">
             {{ sourceLabelMap[row.source] || row.source || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="区域" width="90">
+          <template #default="{ row }">
+            {{ row.area || '正文' }}
           </template>
         </el-table-column>
         <el-table-column prop="type" label="类别" width="120" />
@@ -362,7 +372,8 @@ function hasEnabledCustomWords() {
 
 const form = reactive({
   mode: hasEnabledCustomWords() ? 'custom' : 'smart',
-  enabledTypes: presetTypeOptions.map((item) => item.value)
+  enabledTypes: presetTypeOptions.map((item) => item.value),
+  enableHeaderFooterMask: true
 })
 
 const currentFile = ref(null)
@@ -383,6 +394,11 @@ const autoResult = reactive({
   hitList: []
 })
 const autoDetectionCache = reactive({
+  signature: '',
+  entities: [],
+  ready: false
+})
+const headerFooterDetectionCache = reactive({
   signature: '',
   entities: [],
   ready: false
@@ -542,6 +558,16 @@ function buildDetectionSignature(enabledTypes = []) {
   ].join('|')
 }
 
+function buildHeaderFooterSignature(enabledTypes = [], sections = []) {
+  if (!currentFile.value) {
+    return ''
+  }
+  return [
+    buildDetectionSignature(enabledTypes),
+    sections.map((section) => `${section.area}:${section.pageNumber || section.path || ''}:${section.text}`).join('|')
+  ].join('::header-footer::')
+}
+
 function isControlWordMatch(value, words = []) {
   const normalized = String(value || '').trim()
   return Boolean(normalized) && words.includes(normalized)
@@ -567,6 +593,9 @@ function resetAutoResultState() {
   autoDetectionCache.signature = ''
   autoDetectionCache.entities = []
   autoDetectionCache.ready = false
+  headerFooterDetectionCache.signature = ''
+  headerFooterDetectionCache.entities = []
+  headerFooterDetectionCache.ready = false
 }
 
 function resetResultState() {
@@ -595,6 +624,7 @@ function resetTaskState() {
   resetResultState()
   form.mode = hasEnabledCustomWords() ? 'custom' : 'smart'
   form.enabledTypes = presetTypeOptions.map((item) => item.value)
+  form.enableHeaderFooterMask = true
   currentFile.value = null
   processing.value = false
   debugError.value = ''
@@ -628,6 +658,104 @@ function buildCombinedHitList(responseHitList = [], manualPdfRegionsToUse = []) 
     ...responseHitList,
     ...buildManualPdfRegionHitList(manualPdfRegionsToUse)
   ])
+}
+
+function getHeaderFooterSections() {
+  if (!currentFile.value || !form.enableHeaderFooterMask) {
+    return []
+  }
+
+  if (currentFile.value.extension === 'docx') {
+    return (currentFile.value.analysis?.headerFooterSections || [])
+      .map((section) => ({
+        area: section.area || '页眉页脚',
+        path: section.path || '',
+        text: String(section.text || '').trim()
+      }))
+      .filter((section) => section.text)
+  }
+
+  if (currentFile.value.extension === 'pdf') {
+    return (currentFile.value.analysis?.pages || [])
+      .flatMap((page) => [
+        {
+          area: '页眉',
+          pageNumber: page.pageNumber,
+          text: String(page.headerText || '').trim()
+        },
+        {
+          area: '页脚',
+          pageNumber: page.pageNumber,
+          text: String(page.footerText || '').trim()
+        }
+      ])
+      .filter((section) => section.text)
+  }
+
+  return []
+}
+
+function buildHeaderFooterRecognitionText(sections = []) {
+  return sections
+    .map((section, index) => [
+      `【${section.area}${section.pageNumber ? ` 第${section.pageNumber}页` : ''} ${index + 1}】`,
+      section.text
+    ].join('\n'))
+    .join('\n\n')
+}
+
+function withHeaderFooterArea(hitList = [], sections = []) {
+  const sectionText = sections.map((section) => section.text).join('\n')
+  return hitList.map((item) => {
+    const matchedSection = sections.find((section) =>
+      section.text.includes(item.original) || sectionText.includes(item.original)
+    )
+    return {
+      ...item,
+      area: matchedSection?.area || '页眉页脚',
+      pageNumber: matchedSection?.pageNumber || item.pageNumber,
+      sectionPath: matchedSection?.path || item.sectionPath,
+      source: item.source || 'header-footer'
+    }
+  })
+}
+
+async function buildHeaderFooterHitList(enabledTypesToUse = [], customWordsToUse = []) {
+  const sections = getHeaderFooterSections()
+  if (!sections.length) {
+    return []
+  }
+
+  const headerFooterText = buildHeaderFooterRecognitionText(sections)
+  let externalEntities = []
+
+  if (enabledTypesToUse.length) {
+    const detectionSignature = buildHeaderFooterSignature(enabledTypesToUse, sections)
+    if (headerFooterDetectionCache.ready && headerFooterDetectionCache.signature === detectionSignature) {
+      externalEntities = headerFooterDetectionCache.entities
+    } else {
+      processingStage.value = 'ai'
+      externalEntities = await detectPreciseChineseEntities(headerFooterText, enabledTypesToUse, {
+        whitelistWords: effectiveWhitelistWords.value,
+        ourEntityWords: activeOurEntityWords.value
+      })
+      headerFooterDetectionCache.signature = detectionSignature
+      headerFooterDetectionCache.entities = externalEntities
+      headerFooterDetectionCache.ready = true
+    }
+  }
+
+  const response = desensitizeText({
+    text: headerFooterText,
+    enableSmart: true,
+    enabledTypes: enabledTypesToUse,
+    customWords: customWordsToUse,
+    externalEntities,
+    whitelistWords: effectiveWhitelistWords.value,
+    ourEntityWords: activeOurEntityWords.value
+  })
+
+  return withHeaderFooterArea(response.hitList, sections)
 }
 
 function buildFinalManualResult(manualTextSelectionsToUse = [], manualPdfRegionsToUse = []) {
@@ -732,10 +860,15 @@ async function ensureAutoPreviewReady(showMessage = false, options = {}) {
       whitelistWords: effectiveWhitelistWords.value,
       ourEntityWords: activeOurEntityWords.value
     })
+    const headerFooterHitList = await buildHeaderFooterHitList(enabledTypesToUse, customWordsToUse)
+    const finalHitList = buildCombinedHitList([
+      ...response.hitList,
+      ...headerFooterHitList
+    ])
 
     autoResult.maskedText = response.maskedText
-    autoResult.hitList = response.hitList
-    applyPreviewResult(response.maskedText, response.hitList)
+    autoResult.hitList = finalHitList
+    applyPreviewResult(response.maskedText, finalHitList)
     manualTextSelections.value = []
     manualPdfRegions.value = []
     pendingWhitelistWords.value = []
@@ -749,22 +882,22 @@ async function ensureAutoPreviewReady(showMessage = false, options = {}) {
           user: authStore.currentUser,
           sourcePath: currentFile.value.path,
           sourceBytes: currentFile.value.bytes,
-          hitList: response.hitList,
+          hitList: finalHitList,
           pageAnalyses: currentFile.value.analysis?.pages || []
         }
       )
       result.exportPath = exportMeta.absolutePath
     }
     if (options.recordHistory !== false) {
-      recordTaskResult(response.maskedText, response.hitList, exportMeta)
+      recordTaskResult(response.maskedText, finalHitList, exportMeta)
     }
 
     if (showMessage) {
       ElMessage.success(
         exportMeta.absolutePath
-          ? `自动脱敏完成，共处理 ${response.hitList.length} 项，原格式文件已输出。`
+          ? `自动脱敏完成，共处理 ${finalHitList.length} 项，原格式文件已输出。`
           : hasAutomaticStrategy
-          ? `自动脱敏完成，共处理 ${response.hitList.length} 项，可继续手动补充。`
+          ? `自动脱敏完成，共处理 ${finalHitList.length} 项，可继续手动补充。`
           : '已准备好手动脱敏内容，可继续补充。'
       )
     }
@@ -1347,6 +1480,20 @@ onBeforeUnmount(() => {
 
 .mode-row {
   margin: 18px 0;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: #f8fbff;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .pdf-analysis-alert {

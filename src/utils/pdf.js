@@ -216,6 +216,19 @@ function buildPdfTextDiagnostics(pageSummaries) {
   }
 }
 
+function extractPageHeaderFooterText(textContent, viewport) {
+  const lines = buildViewportLines(textContent, viewport)
+  const headerBottom = viewport.height * 0.14
+  const footerTop = viewport.height * 0.86
+  const headerLines = lines.filter((line) => line.y <= headerBottom)
+  const footerLines = lines.filter((line) => line.y >= footerTop)
+
+  return {
+    headerText: headerLines.map((line) => line.text.trim()).filter(Boolean).join('\n'),
+    footerText: footerLines.map((line) => line.text.trim()).filter(Boolean).join('\n')
+  }
+}
+
 export async function extractPdfTextWithDiagnostics(bytes) {
   const loadingTask = pdfjsLib.getDocument({ data: await readPdfBytes(bytes) })
   const pdf = await loadingTask.promise
@@ -224,7 +237,9 @@ export async function extractPdfTextWithDiagnostics(bytes) {
   for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
     const page = await pdf.getPage(pageIndex)
     const content = await page.getTextContent()
+    const viewport = page.getViewport({ scale: 1 })
     const pageText = rebuildPageText(content)
+    const headerFooterText = extractPageHeaderFooterText(content, viewport)
     const normalizedCharCount = normalizeSearchText(pageText).length
     const itemCount = content.items?.length || 0
     const hasUsableText = normalizedCharCount >= 8 || itemCount >= 3
@@ -236,7 +251,9 @@ export async function extractPdfTextWithDiagnostics(bytes) {
       itemCount,
       textLength: pageText.length,
       normalizedCharCount,
-      hasUsableText
+      hasUsableText,
+      headerText: headerFooterText.headerText,
+      footerText: headerFooterText.footerText
     })
   }
 
