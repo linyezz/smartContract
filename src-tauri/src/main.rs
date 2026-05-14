@@ -119,17 +119,22 @@ struct PreciseEntityPayload {
 struct LlmSensitiveEntityRequest {
     text: String,
     enabled_types: Vec<String>,
+    config: Option<LlmDesensitizeConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LlmDesensitizeConfig {
     enabled: Option<bool>,
+    #[serde(alias = "baseUrl")]
     base_url: Option<String>,
+    #[serde(alias = "apiKey")]
     api_key: Option<String>,
     model: Option<String>,
     thinking: Option<Value>,
+    #[serde(alias = "reasoningEffort")]
     reasoning_effort: Option<String>,
+    #[serde(alias = "timeoutSeconds")]
     timeout_seconds: Option<u64>,
 }
 
@@ -471,6 +476,7 @@ fn read_llm_config() -> Option<LlmDesensitizeConfig> {
     if let Ok(exe_path) = env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             candidates.push(exe_dir.join("llm-desensitize.config.json"));
+            candidates.push(exe_dir.join("resources").join("llm-desensitize.config.json"));
         }
     }
 
@@ -682,7 +688,7 @@ async fn detect_llm_sensitive_entities(
         return Ok(Vec::new());
     }
 
-    let Some(config) = resolve_llm_config() else {
+    let Some(config) = payload.config.or_else(resolve_llm_config) else {
         #[cfg(debug_assertions)]
         eprintln!("[LLM脱敏识别] 跳过：未读取到配置。");
         return Ok(Vec::new());

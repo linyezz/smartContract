@@ -1,4 +1,5 @@
 import { resourceDir, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import OpenAI from 'openai'
@@ -463,6 +464,16 @@ function buildLlmMessages(text, enabledTypes = []) {
   ]
 }
 
+async function detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes = [], config = {}) {
+  return invoke('detect_llm_sensitive_entities', {
+    payload: {
+      text,
+      enabledTypes,
+      config
+    }
+  })
+}
+
 export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
   debugLlmRecognition('进入 detectLlmSensitiveEntities', {
     textLength: Array.from(text || '').length,
@@ -493,6 +504,16 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
   if (!enabledTypes.length) {
     debugLlmRecognition('跳过', '未启用任何脱敏类型')
     return []
+  }
+
+  if (isTauriRuntime()) {
+    try {
+      const entities = await detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes, config)
+      debugLlmRecognition('Rust 原生命令实体输出', entities)
+      return entities
+    } catch (error) {
+      warnLlmRecognition('Rust 原生命令调用失败，回退到 OpenAI JS SDK', buildDebugError(error))
+    }
   }
 
   const client = createOpenAiClient(config)
