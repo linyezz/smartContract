@@ -461,11 +461,18 @@ async fn detect_chinese_entities(text: String) -> Result<Vec<PreciseEntityPayloa
     Ok(collect_precise_entities(&text, &prediction))
 }
 
-fn read_llm_config() -> Option<LlmDesensitizeConfig> {
+fn read_llm_config(app: Option<&AppHandle>) -> Option<LlmDesensitizeConfig> {
     let mut candidates = Vec::new();
 
     if let Ok(path) = env::var("LLM_DESENSITIZE_CONFIG") {
         candidates.push(PathBuf::from(path));
+    }
+
+    if let Some(app) = app {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join("llm-desensitize.config.json"));
+            candidates.push(resource_dir.join("resources").join("llm-desensitize.config.json"));
+        }
     }
 
     if let Ok(current_dir) = env::current_dir() {
@@ -492,8 +499,8 @@ fn read_llm_config() -> Option<LlmDesensitizeConfig> {
     None
 }
 
-fn resolve_llm_config() -> Option<LlmDesensitizeConfig> {
-    let mut config = read_llm_config().unwrap_or(LlmDesensitizeConfig {
+fn resolve_llm_config(app: Option<&AppHandle>) -> Option<LlmDesensitizeConfig> {
+    let mut config = read_llm_config(app).unwrap_or(LlmDesensitizeConfig {
         enabled: Some(false),
         base_url: None,
         api_key: None,
@@ -674,6 +681,7 @@ fn normalize_llm_entities(
 
 #[tauri::command]
 async fn detect_llm_sensitive_entities(
+    app: AppHandle,
     payload: LlmSensitiveEntityRequest,
 ) -> Result<Vec<PreciseEntityPayload>, String> {
     #[cfg(debug_assertions)]
@@ -688,7 +696,7 @@ async fn detect_llm_sensitive_entities(
         return Ok(Vec::new());
     }
 
-    let Some(config) = payload.config.or_else(resolve_llm_config) else {
+    let Some(config) = payload.config.or_else(|| resolve_llm_config(Some(&app))) else {
         #[cfg(debug_assertions)]
         eprintln!("[LLM脱敏识别] 跳过：未读取到配置。");
         return Ok(Vec::new());

@@ -1,6 +1,4 @@
-import { resourceDir, join } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
-import { readTextFile } from '@tauri-apps/plugin-fs'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import OpenAI from 'openai'
 
@@ -79,12 +77,6 @@ async function loadLlmConfigFromPublicAsset() {
   return response.json()
 }
 
-async function loadLlmConfigFromTauriResource() {
-  const resourcePath = await join(await resourceDir(), 'llm-desensitize.config.json')
-  const content = await readTextFile(resourcePath)
-  return JSON.parse(content)
-}
-
 async function loadLlmDesensitizeConfig() {
   if (!llmConfigPromise) {
     llmConfigPromise = loadLlmConfigFromPublicAsset()
@@ -94,25 +86,9 @@ async function loadLlmDesensitizeConfig() {
       })
       .catch(async (assetError) => {
         debugLlmRecognition('前端静态配置读取失败，尝试读取 Tauri 资源配置', buildDebugError(assetError))
-        if (!isTauriRuntime()) {
-          warnLlmRecognition('配置读取失败，已跳过大模型识别', buildDebugError(assetError))
-          return {
-            enabled: false
-          }
-        }
-
-        try {
-          const config = await loadLlmConfigFromTauriResource()
-          warnLlmRecognition('已从 Tauri 资源目录读取大模型配置', buildDebugConfig(config))
-          return config
-        } catch (resourceError) {
-          warnLlmRecognition('配置读取失败，已跳过大模型识别', {
-            assetError: buildDebugError(assetError),
-            resourceError: buildDebugError(resourceError)
-          })
-          return {
-            enabled: false
-          }
+        warnLlmRecognition('配置读取失败，已跳过 JS SDK 大模型识别', buildDebugError(assetError))
+        return {
+          enabled: false
         }
       })
   }
@@ -464,7 +440,7 @@ function buildLlmMessages(text, enabledTypes = []) {
   ]
 }
 
-async function detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes = [], config = {}) {
+async function detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes = [], config = undefined) {
   return invoke('detect_llm_sensitive_entities', {
     payload: {
       text,
@@ -484,6 +460,23 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
     hasTauriGlobal: typeof window !== 'undefined' && Boolean(window.__TAURI__)
   })
 
+  if (!text?.trim()) {
+    debugLlmRecognition('跳过', '文本为空')
+    return []
+  }
+  if (!enabledTypes.length) {
+    debugLlmRecognition('跳过', '未启用任何脱敏类型')
+    return []
+  }
+
+  try {
+    const entities = await detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes)
+    debugLlmRecognition('Rust 原生命令实体输出', entities)
+    return entities
+  } catch (error) {
+    debugLlmRecognition('Rust 原生命令不可用，尝试前端配置和 JS SDK', buildDebugError(error))
+  }
+
   const config = await loadLlmDesensitizeConfig()
   debugLlmRecognition('配置读取成功', buildDebugConfig(config))
 
@@ -497,25 +490,6 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
     warnLlmRecognition('跳过：大模型配置缺少 apiKey', buildDebugConfig(config))
     throw new Error('大模型配置缺少 apiKey')
   }
-  if (!text?.trim()) {
-    debugLlmRecognition('跳过', '文本为空')
-    return []
-  }
-  if (!enabledTypes.length) {
-    debugLlmRecognition('跳过', '未启用任何脱敏类型')
-    return []
-  }
-
-  if (isTauriRuntime()) {
-    try {
-      const entities = await detectLlmSensitiveEntitiesWithNativeCommand(text, enabledTypes, config)
-      debugLlmRecognition('Rust 原生命令实体输出', entities)
-      return entities
-    } catch (error) {
-      warnLlmRecognition('Rust 原生命令调用失败，回退到 OpenAI JS SDK', buildDebugError(error))
-    }
-  }
-
   const client = createOpenAiClient(config)
   const requestPayload = {
     messages: buildLlmMessages(text, enabledTypes),

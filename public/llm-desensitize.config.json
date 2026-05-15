@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "baseUrl": "https://model-api.ecmax.cn/v1",
+  "apiKey": "",
+  "model": "deepseek-v4-flash",
+  "thinking": {
+    "type": "enabled"
+  },
+  "reasoningEffort": "high",
+  "timeoutSeconds": 60
+}
