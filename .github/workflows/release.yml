@@ -64,7 +64,7 @@ jobs:
         env:
           LLM_DESENSITIZE_ENABLED: ${{ vars.LLM_DESENSITIZE_ENABLED }}
           LLM_DESENSITIZE_BASE_URL: ${{ vars.LLM_DESENSITIZE_BASE_URL }}
-          LLM_DESENSITIZE_MODEL: ${{ vars.LLM_DESENSITIZE_MODEL }}
+          LLM_DESENSITIZE_RELEASE_MODEL: ${{ vars.LLM_DESENSITIZE_RELEASE_MODEL || secrets.LLM_DESENSITIZE_RELEASE_MODEL }}
           LLM_DESENSITIZE_THINKING_TYPE: ${{ vars.LLM_DESENSITIZE_THINKING_TYPE }}
           LLM_DESENSITIZE_REASONING_EFFORT: ${{ vars.LLM_DESENSITIZE_REASONING_EFFORT }}
           LLM_DESENSITIZE_TIMEOUT_SECONDS: ${{ vars.LLM_DESENSITIZE_TIMEOUT_SECONDS }}
@@ -76,8 +76,7 @@ jobs:
       - name: Verify LLM Config
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const config=JSON.parse(fs.readFileSync('public/llm-desensitize.config.json','utf8')); if(!config.enabled) throw new Error('LLM config is disabled'); if(!config.apiKey) throw new Error('LLM apiKey is missing'); console.log('[LLM脱敏识别] 发布配置校验通过', { baseUrl: config.baseUrl, model: config.model, hasApiKey: Boolean(config.apiKey) });"
-          test -f src-tauri/llm-desensitize.config.json
+          node -e "const fs=require('fs'); for (const path of ['public/llm-desensitize.config.json','src-tauri/llm-desensitize.config.json']) { const config=JSON.parse(fs.readFileSync(path,'utf8')); if(!config.enabled) throw new Error(path + ' LLM config is disabled'); if(!config.apiKey) throw new Error(path + ' LLM apiKey is missing'); console.log('[LLM脱敏识别] 发布配置校验通过', { path, baseUrl: config.baseUrl, model: config.model, hasApiKey: Boolean(config.apiKey) }); }"
 
       - name: Setup RapidOCR Worker Environment
         run: node ./scripts/setup-ocr-worker.mjs

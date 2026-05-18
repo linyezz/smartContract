@@ -1,7 +1,7 @@
 {
   "enabled": false,
   "baseUrl": "https://model-api.ecmax.cn/v1",
-  "apiKey": "sk-RaPs6k221dA4QHvnQVB8PnJS5fK0lFWf4XAfzpHwAj2fZaCU",
+  "apiKey": "",
   "model": "deepseek-v4-flash",
   "thinking": {
     "type": "enabled"

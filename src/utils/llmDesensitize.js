@@ -493,7 +493,7 @@ export async function detectLlmSensitiveEntities(text, enabledTypes = []) {
   const client = createOpenAiClient(config)
   const requestPayload = {
     messages: buildLlmMessages(text, enabledTypes),
-    model: config.model || 'deepseek-v4-pro',
+    model: config.model || 'deepseek-v4-flash',
     thinking: config.thinking,
     reasoning_effort: config.reasoningEffort,
     stream: false

@@ -244,7 +244,7 @@ public/llm-desensitize.config.example.json
   "enabled": true,
   "baseUrl": "http://127.0.0.1:11434/v1",
   "apiKey": "local-key",
-  "model": "deepseek-v4-pro",
+  "model": "deepseek-v4-flash",
   "thinking": {
     "type": "enabled"
   },

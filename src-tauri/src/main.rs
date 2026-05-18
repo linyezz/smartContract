@@ -721,7 +721,7 @@ async fn detect_llm_sensitive_entities(
         .to_string();
     let model = config
         .model
-        .unwrap_or_else(|| "deepseek-v4-pro".to_string());
+        .unwrap_or_else(|| "deepseek-v4-flash".to_string());
     let timeout = Duration::from_secs(config.timeout_seconds.unwrap_or(60).clamp(5, 180));
     let endpoint = format!("{base_url}/chat/completions");
 

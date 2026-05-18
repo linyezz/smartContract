@@ -3,10 +3,12 @@ import path from 'node:path'
 import process from 'node:process'
 
 const projectRoot = process.cwd()
-const apiKey = process.env.LLM_DESENSITIZE_API_KEY || process.env.DEEPSEEK_API_KEY || ''
-const enabledFromEnv = process.env.LLM_DESENSITIZE_ENABLED || undefined
+const readEnv = (name, fallback = '') => String(process.env[name] || fallback).trim()
+
+const apiKey = readEnv('LLM_DESENSITIZE_API_KEY') || readEnv('DEEPSEEK_API_KEY')
+const enabledFromEnv = readEnv('LLM_DESENSITIZE_ENABLED') || undefined
 const requireApiKey = ['1', 'true', 'TRUE', 'yes', 'YES'].includes(
-  process.env.LLM_DESENSITIZE_REQUIRE_API_KEY || ''
+  readEnv('LLM_DESENSITIZE_REQUIRE_API_KEY')
 )
 const enabled = enabledFromEnv === undefined
   ? Boolean(apiKey)
@@ -19,14 +21,14 @@ if (requireApiKey && !apiKey) {
 
 const config = {
   enabled,
-  baseUrl: process.env.LLM_DESENSITIZE_BASE_URL || 'https://model-api.ecmax.cn/v1',
+  baseUrl: readEnv('LLM_DESENSITIZE_BASE_URL', 'https://model-api.ecmax.cn/v1'),
   apiKey,
-  model: process.env.LLM_DESENSITIZE_MODEL || 'deepseek-v4-pro',
+  model: readEnv('LLM_DESENSITIZE_RELEASE_MODEL', 'deepseek-v4-flash'),
   thinking: {
-    type: process.env.LLM_DESENSITIZE_THINKING_TYPE || 'enabled'
+    type: readEnv('LLM_DESENSITIZE_THINKING_TYPE', 'enabled')
   },
-  reasoningEffort: process.env.LLM_DESENSITIZE_REASONING_EFFORT || 'high',
-  timeoutSeconds: Number(process.env.LLM_DESENSITIZE_TIMEOUT_SECONDS || 60)
+  reasoningEffort: readEnv('LLM_DESENSITIZE_REASONING_EFFORT', 'high'),
+  timeoutSeconds: Number(readEnv('LLM_DESENSITIZE_TIMEOUT_SECONDS', 60))
 }
 
 const targets = [
@@ -43,6 +45,8 @@ console.log('[LLM脱敏识别] 已生成配置', {
   enabled: config.enabled,
   baseUrl: config.baseUrl,
   model: config.model,
+  modelEnv: 'LLM_DESENSITIZE_RELEASE_MODEL',
+  hasModelEnv: Boolean(readEnv('LLM_DESENSITIZE_RELEASE_MODEL')),
   hasApiKey: Boolean(config.apiKey),
   targets
 })
